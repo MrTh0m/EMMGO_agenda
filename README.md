@@ -1,7 +1,7 @@
 # 📚 EMMGO Dashboard — Devoirs & Live Sessions
 
 Suivi des devoirs et live sessions emlyon business school.
-Un seul fichier HTML statique + un proxy serveur — hébergeable sur ton propre serveur ou sur GitHub Pages / Netlify.
+Un fichier HTML + un backend PHP léger, hébergeable sur ton propre serveur ou en statique.
 
 ---
 
@@ -9,88 +9,98 @@ Un seul fichier HTML statique + un proxy serveur — hébergeable sur ton propre
 
 | Fichier | Rôle |
 |---|---|
-| `index.html` | Dashboard principal (interface utilisateur) |
-| `proxy.php` | Proxy PHP côté serveur — récupère le calendrier ICS sans CORS |
-| `ics-proxy.py` | Alternative Python si PHP sans cURL/OpenSSL |
-| `ics-proxy.service` | Fichier systemd pour lancer le proxy Python au démarrage |
-| `test-proxy.php` | Script de diagnostic — à supprimer après utilisation |
+| `index.html` | Dashboard principal — toute l'interface |
+| `proxy.php` | Proxy ICS pour le mode invité (contourne le CORS Brightspace) |
+| `api.php` | Backend du mode connecté (auth, état rendus, URL ICS, partage) |
+| `setup.php` | Configuration initiale — mot de passe, token de partage |
+| `test-proxy.php` | Diagnostic réseau/PHP — **à supprimer après usage** |
+| `data/` | Dossier créé automatiquement — `config.json`, `state.json` |
 
 ---
 
-## 🚀 Installation sur serveur auto-hébergé (recommandé)
+## 🔐 Modes de fonctionnement
 
-### Prérequis PHP
-Le proxy PHP nécessite l'extension cURL (et donc OpenSSL).
-Vérifie la disponibilité avec `test-proxy.php`, puis installe si nécessaire :
+### Mode invité (aucune configuration requise)
+- ICS URL stockée dans le `localStorage` du navigateur
+- État "rendu" stocké dans le `localStorage`
+- Utilise `proxy.php` pour récupérer le calendrier Brightspace
+- Si `proxy.php` absent ou inaccessible : cascade vers des proxies publics
+
+### Mode connecté (1 compte, persistance serveur)
+- Login par mot de passe (bcrypt PHP)
+- URL ICS Brightspace stockée dans `data/config.json` (jamais exposée au navigateur)
+- État "rendu" stocké dans `data/state.json`
+- L'ICS est fetché côté serveur via `api.php?action=fetch_ics` (token Brightspace invisible)
+- Synchronisé sur tous les appareils/navigateurs
+
+### Mode lecture seule — lien de partage
+- URL : `https://ton-domaine/index.html?share=TOKEN`
+- Accès en lecture seule, sans connexion
+- Toutes les actions sont masquées (pas de cases à cocher, pas de boutons, pas d'URL visible)
+- Lien invalide ou expiré → page d'erreur explicite avec bouton "Aller à l'accueil"
+- Token désactivable ou régénérable depuis les paramètres
+
+---
+
+## 🚀 Installation sur serveur auto-hébergé
+
+### 1. Prérequis PHP
+
+Le backend nécessite l'extension cURL et OpenSSL. Vérifie avec `test-proxy.php`, puis installe si absent :
 
 ```bash
 sudo apt install php8.2-curl
-sudo systemctl restart apache2   # ou nginx / php8.2-fpm selon ta config
+sudo systemctl restart apache2   # ou nginx / php8.2-fpm
 ```
 
-### Déploiement
-1. Copie `index.html` et `proxy.php` dans le dossier servi par ton serveur web
-2. Visite `https://ton-domaine/test-proxy.php` pour vérifier que tout fonctionne
-3. Supprime `test-proxy.php` du serveur (il contient ton token ICS)
+### 2. Upload des fichiers
 
----
+Copie dans le dossier servi par Apache/Nginx :
+```
+index.html  proxy.php  api.php  setup.php
+```
 
-## 🐍 Alternative : proxy Python (si PHP sans cURL/OpenSSL)
+### 3. Configuration initiale
 
-Si tu ne peux pas installer les extensions PHP, le proxy Python utilise
-la bibliothèque standard Python (SSL intégré, aucune dépendance externe).
+Visite `https://ton-domaine/setup.php` :
+- Définis un mot de passe (min. 6 caractères)
+- Le dossier `data/` est créé automatiquement avec `.htaccess` bloquant l'accès direct
+- Un token de partage est généré automatiquement
 
-### Déploiement
+### 4. Premier login
+
+1. Ouvre `index.html`
+2. Clique sur l'icône 🔑 → entre ton mot de passe
+3. Saisis l'URL ICS Brightspace dans les paramètres → **Charger**
+4. L'URL est sauvegardée côté serveur ; sur tout nouveau navigateur elle est chargée automatiquement
+
+### 5. Sécuriser setup.php
 
 ```bash
-# Adapter le chemin selon ton serveur
-sudo cp ics-proxy.py /var/www/html/emmgo/
-sudo cp ics-proxy.service /etc/systemd/system/
-
-# Si besoin, édite le chemin ExecStart dans ics-proxy.service, puis :
-sudo systemctl enable --now ics-proxy
+rm setup.php
+# ou dans .htaccess :
 ```
-
-Le proxy écoute sur `http://127.0.0.1:8766`.
-
-### Configuration Apache
-
 ```apache
-# Dans ton VirtualHost
-ProxyPass        /proxy http://127.0.0.1:8766/
-ProxyPassReverse /proxy http://127.0.0.1:8766/
-```
-
-### Configuration Nginx
-
-```nginx
-location /proxy {
-    proxy_pass http://127.0.0.1:8766;
-}
-```
-
-### Adapter index.html
-
-Dans `index.html`, remplacer `proxy.php` par `proxy` dans la liste `CORS_PROXIES` :
-
-```js
-// Avant
-u => ({ url: `proxy.php?url=${encodeURIComponent(u)}`, isJson: false }),
-
-// Après
-u => ({ url: `proxy?url=${encodeURIComponent(u)}`, isJson: false }),
+<Files "setup.php">
+  Require all denied
+</Files>
 ```
 
 ---
 
 ## ☁️ Hébergement statique (GitHub Pages / Netlify)
 
-Sans backend, le dashboard utilise des proxies CORS publics en cascade
-(allorigins.win, corsproxy.io, codetabs.com). Ces proxies sont gratuits
-mais parfois instables.
+Sans backend PHP, seul le mode invité est disponible.
+Le dashboard tente automatiquement plusieurs proxies CORS en cascade :
+
+1. `proxy.php` (local — échoue si absent)
+2. `corsproxy.io`
+3. `allorigins.win`
+4. `codetabs.com`
+5. Paste manuelle du fichier `.ics`
 
 ### GitHub Pages
-1. Crée un dépôt GitHub (privé recommandé — le token ICS est personnel)
+1. Crée un dépôt GitHub (**privé** recommandé — l'URL ICS contient un token personnel)
 2. Upload `index.html` à la racine
 3. **Settings → Pages → Branch: main → Save**
 4. Accessible sur `https://pseudo.github.io/nom-du-repo`
@@ -98,36 +108,52 @@ mais parfois instables.
 ### Netlify
 1. [netlify.com](https://netlify.com) → *Add new site → Deploy manually*
 2. Glisse-dépose `index.html`
-3. En ligne instantanément
-
-> 💡 Pour un accès privé sur Netlify : *Site settings → Identity → Enable*
-
----
-
-## ⚙️ Configuration
-
-L'URL ICS Brightspace est mémorisée dans le `localStorage` du navigateur
-après le premier chargement. Pour la changer : bouton **Paramètres** dans le dashboard.
-
-Pour modifier l'URL par défaut dans le code, chercher cette ligne dans `index.html` :
-
-```
-value="https://emlyon.brightspace.com/d2l/le/calendar/feed/user/feed.ics?token=TON_TOKEN"
-```
 
 ---
 
 ## ✨ Fonctionnalités
 
-- Détection automatique des devoirs (`Assessment`, `Co-construction`, `à échéance`)
-- Détection des live sessions (`Cours distanciel`, `virtual-room.em-lyon.com`)
-- Compte à rebours coloré : rouge ≤ 3j · orange ≤ 7j · vert ≥ 15j
-- Fuseau horaire Europe/Paris correct (dates UTC du calendrier Brightspace)
-- Filtres : type (individuel / collectif) + discipline avec compteurs
-- Table de correspondance code → matière construite automatiquement depuis les sessions
-- Boutons **Casier** (déposer le devoir) et **Afficher l'événement** (page Brightspace)
-- Bouton **Rejoindre** pour les live sessions (salle virtuelle emlyon)
-- **Copier tâche** → presse-papiers → coller dans Google Tasks ou Microsoft To Do
-- **Google Cal.** / **Outlook** → crée un événement à la date d'échéance
-- Export `.ics` filtré importable dans n'importe quel calendrier
-- Dark mode automatique · mémorisation de l'URL ICS
+### Devoirs
+- Détection automatique via mots-clés : `Assessment`, `Co-construction`, `à échéance`
+- Compte à rebours coloré : rouge ≤ 3j · orange ≤ 7j · vert ≥ 15j (fuseau Europe/Paris)
+- Devoirs passés automatiquement marqués comme rendus (sans cache)
+- Case "Marquer comme rendu" pour les devoirs à venir (persistante)
+- Boutons **Casier** (déposer le rendu) et **Afficher l'événement** (page Brightspace)
+
+### Live Sessions
+- Détection via : `Cours distanciel`, `Live Session`, URL `virtual-room.em-lyon.com` dans LOCATION
+- Extraction du code matière et du nom long depuis le titre (`2026_PGMC05_2026-03 Nom matière`)
+- Bouton **Rejoindre** pointant vers l'URL de la salle virtuelle (champ LOCATION)
+- Intervenants extraits du champ DESCRIPTION
+
+### Filtres & navigation
+- Filtres par type (individuel / collectif) et par discipline avec compteurs
+- Affichage des passés on/off
+- Pagination : 5 éléments par défaut, "Afficher X de plus" en bas
+
+### Onglet Progression
+- Carte par matière : barre de progression, rendus/total, répartition individuel/collectif
+- Histogramme hebdomadaire (8 semaines) avec segment plein (rendus) et hachuré (à rendre)
+- Semaine courante mise en évidence
+- Tooltip au survol : liste des devoirs de la semaine avec statut
+
+### Interface
+- Thème clair / sombre / système (bouton ☀/🌙, mémorisé)
+- Export `.ics` filtré importable dans Google Calendar ou Outlook
+- Boutons Google Cal. et Outlook (crée un événement à la date d'échéance)
+- Bouton "Copier tâche" → presse-papiers → coller dans Google Tasks / Microsoft To Do
+- Tout masqué en mode lecture seule (aucune URL, aucune action)
+
+---
+
+## 🔒 Sécurité
+
+| Élément | Protection |
+|---|---|
+| Token ICS Brightspace | Jamais exposé au navigateur en mode connecté/share |
+| Mot de passe | Stocké avec `password_hash()` PHP (bcrypt) |
+| Dossier `data/` | `.htaccess` interdisant l'accès direct |
+| Token de partage | 32 caractères aléatoires, révocable depuis les paramètres |
+| Lien de partage invalide | Page d'erreur explicite, pas de fallback silencieux |
+| Anti-brute-force | Délai de 1s sur mot de passe incorrect |
+| SSRF | Seuls les domaines `emlyon.brightspace.com` et `em-lyon.com` sont autorisés |

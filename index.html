@@ -398,6 +398,9 @@ textarea { height:auto;padding:10px 12px;resize:vertical;line-height:1.5; }
         value=""
         placeholder="https://emlyon.brightspace.com/d2l/le/calendar/feed/user/feed.ics?token=MON_TOKEN">
       <button class="btn primary" onclick="loadCalendar()">Charger</button>
+      <button class="btn" id="btn-unlock-url" onclick="unlockIcsUrl()" title="Saisir une nouvelle URL" style="display:none">
+        <i class="ti ti-pencil"></i>
+      </button>
     </div>
     <div class="error-msg" id="err-box" style="display:none">
       <i class="ti ti-alert-circle" style="flex-shrink:0;margin-top:1px"></i>
@@ -602,15 +605,19 @@ const Auth = {
               Auth.mode       = 'share';
               Auth.readOnly   = true;
               Auth.shareToken = shareParam;
-              // Normalise: PHP may return an array [] for empty objects — force {}
               const raw = sd.state?.rendus;
               Auth._cache = (raw && typeof raw === 'object' && !Array.isArray(raw)) ? raw : {};
               Auth._updateUI();
               return;
             }
           }
-        } catch(_) {}
-        // Invalid or expired token → silent guest fallback
+          // Token invalide ou expiré — afficher une erreur explicite
+          Auth._showInvalidShareError();
+          return;
+        } catch(_) {
+          Auth._showInvalidShareError();
+          return;
+        }
       }
 
       if (cfg.logged_in) {
@@ -618,7 +625,9 @@ const Auth = {
         Auth.mode     = 'connected';
         Auth.readOnly = false;
         Auth._updateUI();
+        // Même comportement que post-login : masquer l'URL et afficher le lien de partage
         Auth._showShareInfo(cfg);
+        if (cfg.ics_url) Auth._setIcsUrlFields(cfg.ics_url);
       } else {
         // Not logged in but API available → show login button
         Auth.mode = 'guest';
@@ -726,10 +735,25 @@ const Auth = {
         Auth.mode     = 'connected';
         Auth.readOnly = false;
         Auth._updateUI();
-        // Refresh share info
         const cfg = await (await fetch(`${Auth._apiBase}?action=get_config`)).json();
         Auth._showShareInfo(cfg);
+
+        // URL ICS : utiliser celle du serveur, ou sauvegarder celle du localStorage si le serveur n'en a pas
+        let serverIcsUrl = d.ics_url || '';
+        if (!serverIcsUrl) {
+          // Premier login : récupérer l'URL depuis localStorage et la sauvegarder côté serveur
+          const localUrl = localStorage.getItem(STORAGE_KEY) || '';
+          if (localUrl) {
+            await fetch(Auth._apiBase, { method:'POST', headers:{'Content-Type':'application/json'},
+              body: JSON.stringify({ action:'save_ics_url', ics_url: localUrl }) });
+            serverIcsUrl = localUrl;
+            toast('✓ URL ICS sauvegardée sur le serveur');
+          }
+        }
+        // Pré-remplir les champs avec une version masquée (token caché)
+        Auth._setIcsUrlFields(serverIcsUrl);
         renderDevoirs(); renderProgression(); renderStats();
+        loadCalendar();
         toast('✓ Connecté — données synchronisées');
       } else {
         errEl.textContent = d.error || 'Erreur de connexion';
@@ -779,6 +803,56 @@ const Auth = {
     if (Auth._shareUrl) {
       navigator.clipboard.writeText(Auth._shareUrl).then(() => toast('✓ URL copiée'));
     }
+  },
+
+  // Affiche une erreur explicite quand le token de partage est invalide ou expiré
+  _showInvalidShareError() {
+    document.getElementById('setup-card').style.display    = 'none';
+    document.getElementById('loading-box').style.display   = 'none';
+    document.getElementById('dashboard').style.display     = 'none';
+    document.getElementById('settings-panel').style.display = 'none';
+    // Injecter un bloc d'erreur dans la page
+    const homeUrl = location.origin + location.pathname;
+    const errDiv = document.createElement('div');
+    errDiv.style.cssText = `
+      max-width:440px;margin:60px auto;text-align:center;padding:40px 32px;
+      background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);
+      box-shadow:var(--shadow);
+    `;
+    errDiv.innerHTML = `
+      <i class="ti ti-link-off" style="font-size:48px;color:var(--c-red);display:block;margin-bottom:16px"></i>
+      <h2 style="font-size:18px;font-weight:700;margin-bottom:10px">Lien de partage invalide</h2>
+      <p style="font-size:14px;color:var(--text2);line-height:1.6;margin-bottom:24px">
+        Ce lien de partage est invalide ou a expiré.<br>
+        Demande un nouveau lien au propriétaire du tableau de bord.
+      </p>
+      <a href="${homeUrl}" style="
+        display:inline-flex;align-items:center;gap:8px;
+        padding:10px 22px;border-radius:9px;
+        background:var(--text);color:var(--bg);
+        text-decoration:none;font-size:14px;font-weight:600;
+      ">
+        <i class="ti ti-home"></i> Aller à l'accueil
+      </a>
+    `;
+    document.querySelector('.page').appendChild(errDiv);
+  },
+
+  // Affiche l'URL ICS dans les champs en masquant le token (sécurité)
+  _setIcsUrlFields(url) {
+    if (!url) return;
+    // Masquer la valeur du token dans l'affichage : token=XXXX → token=****
+    const masked = url.replace(/([\?&]token=)[^&]+/i, '$1****');
+    // Stocker l'URL réelle dans un attribut data, afficher la version masquée
+    const fields = [document.getElementById('ics-url'), document.getElementById('ics-url-setup')];
+    fields.forEach(f => {
+      if (!f) return;
+      f.value = masked;
+      f.dataset.realUrl = url; // URL réelle pour l'envoi
+      f.setAttribute('readonly', 'readonly');
+      f.style.color = 'var(--text2)';
+      f.style.fontStyle = 'italic';
+    });
   },
 };
 
@@ -1008,7 +1082,12 @@ function copyTask(idx) {
 /* ══════════════════════════════════════════════════════════════
    Load & process
 ══════════════════════════════════════════════════════════════ */
-function getIcsUrl(){return(document.getElementById('ics-url').value||document.getElementById('ics-url-setup').value).trim();}
+function getIcsUrl() {
+  const f = document.getElementById('ics-url');
+  // En mode connecté, l'URL réelle est dans data-real-url (champ affiché masqué)
+  if (f && f.dataset.realUrl) return f.dataset.realUrl;
+  return (f?.value || document.getElementById('ics-url-setup')?.value || '').trim();
+}
 function syncUrlFields(){
   const a=document.getElementById('ics-url').value.trim();
   const b=document.getElementById('ics-url-setup').value.trim();
@@ -1018,30 +1097,52 @@ function syncUrlFields(){
 function loadFromSetup(){document.getElementById('ics-url').value=document.getElementById('ics-url-setup').value.trim();loadCalendar();}
 
 async function loadCalendar() {
+  // ── Mode connecté ou share : fetch ICS côté serveur ─────────────
+  if (Auth.mode === 'connected' || Auth.mode === 'share') {
+    showLoading();
+    const shareQ = Auth.mode === 'share' ? `&share=${encodeURIComponent(Auth.shareToken)}` : '';
+    try {
+      const r = await fetch(`${Auth._apiBase}?action=fetch_ics${shareQ}`, { signal: AbortSignal.timeout(15000) });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({ error: `HTTP ${r.status}` }));
+        showError(err.error || `Erreur ${r.status}`);
+        return;
+      }
+      const txt = await r.text();
+      if (!txt.includes('BEGIN:VCALENDAR')) { showError('Réponse invalide (pas un fichier ICS)'); return; }
+      processICS(txt);
+    } catch(e) { showError(`Impossible de charger le calendrier : ${e.message}`); }
+    return;
+  }
+
+  // ── Mode invité : URL saisie + cascade proxy ─────────────────────
   syncUrlFields();
-  const url=getIcsUrl();
-  if(!url){showError('Merci de renseigner l\'URL de ton calendrier ICS.');return;}
-  try{localStorage.setItem(STORAGE_KEY,url);}catch(_){}
+  const url = getIcsUrl();
+  if (!url) { showError('Merci de renseigner l\'URL de ton calendrier ICS.'); return; }
+  try { localStorage.setItem(STORAGE_KEY, url); } catch(_) {}
+  // En mode connecté, sauvegarder l'URL côté serveur
+  if (Auth.mode === 'connected') {
+    fetch(Auth._apiBase, { method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ action:'save_ics_url', ics_url: url }) }).catch(()=>{});
+  }
   showLoading();
-  let txt=null;
-  // 1. Proxy local
-  try{const r=await fetch(`proxy.php?url=${encodeURIComponent(url)}`,{signal:AbortSignal.timeout(10000)});if(r.ok){const t=await r.text();if(t.includes('BEGIN:VCALENDAR'))txt=t;}}catch(_){}
+  let txt = null;
+  // 1. Proxy local PHP
+  try { const r=await fetch(`proxy.php?url=${encodeURIComponent(url)}`,{signal:AbortSignal.timeout(10000)}); if(r.ok){const t=await r.text();if(t.includes('BEGIN:VCALENDAR'))txt=t;} } catch(_) {}
   // 2. Direct
-  if(!txt){try{const r=await fetch(url,{signal:AbortSignal.timeout(5000)});if(r.ok){const t=await r.text();if(t.includes('BEGIN:VCALENDAR'))txt=t;}}catch(_){}}
-  // 3. Public proxies
-  if(!txt){
-    for(const pFn of CORS_PROXIES){
-      try{
-        const p=pFn(url);
-        const r=await fetch(p.url,{signal:AbortSignal.timeout(12000)});
-        if(!r.ok)continue;
+  if (!txt) { try { const r=await fetch(url,{signal:AbortSignal.timeout(5000)}); if(r.ok){const t=await r.text();if(t.includes('BEGIN:VCALENDAR'))txt=t;} } catch(_) {} }
+  // 3. Proxies publics
+  if (!txt) {
+    for (const pFn of CORS_PROXIES) {
+      try {
+        const p=pFn(url); const r=await fetch(p.url,{signal:AbortSignal.timeout(12000)}); if(!r.ok)continue;
         const ct=r.headers.get('content-type')||'';
         const body=p.isJson||ct.includes('json')?((await r.json()).contents||''):await r.text();
         if(body&&body.includes('BEGIN:VCALENDAR')){txt=body;break;}
-      }catch(_){}
+      } catch(_) {}
     }
   }
-  if(!txt){showError('Impossible de charger le calendrier automatiquement. Vérifie que proxy.php est bien uploadé sur le serveur, ou colle le contenu du .ics ci-dessous.');return;}
+  if (!txt) { showError('Impossible de charger le calendrier automatiquement. Vérifie que proxy.php est bien uploadé sur le serveur, ou colle le contenu du .ics ci-dessous.'); return; }
   processICS(txt);
 }
 
@@ -1077,7 +1178,8 @@ function processICS(txt) {
   hideLoading();
   document.getElementById('setup-card').style.display='none';
   document.getElementById('dashboard').style.display='';
-  document.getElementById('btn-export').style.display='';
+  // Export ICS : uniquement en mode guest et connecté, pas en lecture seule
+  if (!Auth.readOnly) document.getElementById('btn-export').style.display='';
   document.getElementById('settings-panel').style.display='none';
 
   updateBadges();
@@ -1242,14 +1344,13 @@ function renderDevoirs() {
         <div class="card-meta"><i class="ti ti-calendar-event" style="font-size:11px"></i><span>${fmtLong(ev._date)}</span></div>
         ${checkboxBlock}
       </div>
+      ${Auth.readOnly ? '' : `
       <div class="card-actions">
-        ${Auth.readOnly ? '' : `
         ${bsBlock}
         <button class="action-btn" onclick="copyTask(${idx})"><i class="ti ti-clipboard-copy"></i> Copier tâche</button>
         <a class="action-btn" href="${gcUrl(ev)}" target="_blank" rel="noopener"><i class="ti ti-brand-google"></i> Google Cal.</a>
         <a class="action-btn" href="${outlookUrl(ev)}" target="_blank" rel="noopener"><i class="ti ti-brand-office"></i> Outlook</a>
-        `}
-      </div>
+      </div>`}
     </div>`;
   }).join('');
 
@@ -1302,13 +1403,12 @@ function renderSessions() {
         <div class="card-meta"><i class="ti ti-clock" style="font-size:11px"></i><span>${timeStr}</span>${duration?`<span style="color:var(--text3)">·</span><span>${duration} min</span>`:''}</div>
         ${instructorLine}
       </div>
+      ${Auth.readOnly ? '' : `
       <div class="card-actions">
-        ${Auth.readOnly ? '' : `
         ${joinBtn}
         <a class="action-btn" href="${gcUrl(ev)}" target="_blank" rel="noopener"><i class="ti ti-brand-google"></i> Google Cal.</a>
         <a class="action-btn" href="${outlookUrl(ev)}" target="_blank" rel="noopener"><i class="ti ti-brand-office"></i> Outlook</a>
-        `}
-      </div>
+      </div>`}
     </div>`;
   }).join('');
 
@@ -1446,9 +1546,26 @@ function exportICS() {
    UI helpers
 ══════════════════════════════════════════════════════════════ */
 function toggleSettings(){
-  if (Auth.readOnly) return; // URL privée non exposée en mode lecture seule
+  if (Auth.readOnly) return;
   const p=document.getElementById('settings-panel');
   p.style.display=p.style.display==='none'?'':'none';
+  // En mode connecté, afficher le bouton crayon pour modifier l'URL
+  const unlockBtn = document.getElementById('btn-unlock-url');
+  if (unlockBtn) unlockBtn.style.display = Auth.mode === 'connected' ? '' : 'none';
+}
+
+// Déverrouiller le champ URL pour permettre la saisie d'une nouvelle URL
+function unlockIcsUrl() {
+  const f = document.getElementById('ics-url');
+  if (!f) return;
+  f.value = '';
+  delete f.dataset.realUrl;
+  f.removeAttribute('readonly');
+  f.style.color = '';
+  f.style.fontStyle = '';
+  f.placeholder = 'https://emlyon.brightspace.com/d2l/le/calendar/feed/user/feed.ics?token=MON_TOKEN';
+  f.focus();
+  document.getElementById('btn-unlock-url').style.display = 'none';
 }
 function showLoading(){['setup-card','err-box','paste-zone'].forEach(id=>document.getElementById(id).style.display='none');document.getElementById('loading-box').style.display='';document.getElementById('dashboard').style.display='none';}
 function hideLoading(){document.getElementById('loading-box').style.display='none';}
