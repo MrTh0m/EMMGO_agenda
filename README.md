@@ -4,6 +4,7 @@ Suivi des devoirs et live sessions pour tout établissement utilisant **Brightsp
 Un seul fichier HTML + un backend PHP léger, hébergeable sur ton propre serveur ou en statique.
 
 🔗 **[github.com/MrTh0m/Brightspace_agenda](https://github.com/MrTh0m/Brightspace_agenda)**
+🔗 **[mrth0m.github.io/Brightspace_agenda](https://mrth0m.github.io/Brightspace_agenda)**
 📄 **Licence MIT** — libre d'utilisation, modification et redistribution.
 
 ---
