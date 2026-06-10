@@ -383,11 +383,17 @@ textarea { height:auto;padding:10px 12px;resize:vertical;line-height:1.5; }
 .gantt-wrap { overflow-x:auto;-webkit-overflow-scrolling:touch;padding-bottom:8px;scrollbar-width:thin; }
 .gantt-inner { min-width:520px;position:relative; }
 .gantt-months-row { display:flex;margin-left:160px;margin-bottom:4px;position:relative;height:16px; }
-.gantt-month { position:absolute;font-size:9px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;white-space:nowrap; }
+.gantt-month { position:absolute;font-size:9px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.5px;white-space:nowrap;transform:translateX(-50%); }
 .gantt-rows { position:relative; }
+/* Overlay : même base de pourcentage que les labels de mois (après la colonne label) */
+.gantt-tl-overlay {
+  position:absolute;left:160px;right:0;top:0;bottom:0;
+  pointer-events:none;overflow:visible;
+}
+@media(max-width:600px){ .gantt-tl-overlay{left:100px;} }
 .gantt-gridline { position:absolute;top:0;bottom:0;width:1px;background:var(--border);z-index:0;pointer-events:none; }
-.gantt-today-line { position:absolute;top:0;bottom:0;width:2px;background:var(--c-red);opacity:.75;z-index:10;pointer-events:none; }
-.gantt-today-lbl { position:absolute;top:-14px;font-size:9px;font-weight:700;color:var(--c-red);transform:translateX(-50%);white-space:nowrap; }
+.gantt-today-line { position:absolute;top:0;bottom:0;width:2px;background:var(--c-red);opacity:.9;z-index:20;pointer-events:none; }
+.gantt-today-lbl { position:absolute;top:-18px;font-size:9px;font-weight:700;color:var(--c-red);transform:translateX(-50%);white-space:nowrap;background:var(--bg);padding:0 3px;border-radius:3px; }
 .gantt-row { display:flex;align-items:center;margin-bottom:7px;position:relative;z-index:1; }
 .gantt-label { width:160px;flex-shrink:0;padding-right:10px;text-align:right;display:flex;align-items:center;justify-content:flex-end;gap:5px; }
 .gantt-label .gname { font-size:11px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap; }
@@ -1663,47 +1669,60 @@ function renderGantt() {
     .filter(c => c.dates.length)
     .map(c => ({
       ...c,
-      // Normaliser à minuit LOCAL pour cohérence avec les labels de mois et "today"
-      dates: c.dates.sort((a,b) => a-b).map(d => { const n=new Date(d); n.setHours(0,0,0,0); return n; }),
-      first: (() => { const n=new Date(Math.min(...c.dates)); n.setHours(0,0,0,0); return n; })(),
-      last:  (() => { const n=new Date(Math.max(...c.dates)); n.setHours(0,0,0,0); return n; })(),
       count: c.dates.length,
+      first: new Date(Math.min(...c.dates.map(d => d.getTime()))),
+      last:  new Date(Math.max(...c.dates.map(d => d.getTime()))),
     }))
     .sort((a,b) => a.first - b.first);
 
   if (!courses.length) return '';
 
-  // ── Bornes (arithmétique ms, sans setDate pour éviter les problèmes TZ) ──
-  const MS_DAY  = 86400000;
-  const tMinMs  = Math.min(...courses.map(c => c.first.getTime())) - 10 * MS_DAY;
-  const tMaxMs  = Math.max(...courses.map(c => c.last.getTime()))  + 10 * MS_DAY;
-  const totalMs = tMaxMs - tMinMs;
+  // ── Indice de jour : composants locaux → UTC midnight exact ────────
+  // getFullYear/Month/Date retournent la date LOCALE → Date.UTC() crée
+  // un entier exact sans arrondi. Fonctionne quel que soit le fuseau.
+  function dayIdx(d) {
+    return Math.floor(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 86400000);
+  }
 
-  // pct : position % sur la timeline (toutes les dates en ms depuis epoch)
-  const pct = d => Math.max(0, Math.min(100, (d.getTime() - tMinMs) / totalMs * 100)).toFixed(3);
+  // Bornes en indices de jours
+  const allFirst  = courses.map(c => Math.min(...c.dates.map(dayIdx)));
+  const allLast   = courses.map(c => Math.max(...c.dates.map(dayIdx)));
+  const tMinDay   = Math.min(...allFirst) - 10;
+  const tMaxDay   = Math.max(...allLast)  + 10;
+  const totalDays = tMaxDay - tMinDay;
 
-  // ── Labels de mois (minuit LOCAL pour cohérence avec today) ──────
-  const months = [];
-  const tMinLocal = new Date(tMinMs);
-  const mc = new Date(tMinLocal.getFullYear(), tMinLocal.getMonth(), 1); // minuit LOCAL
-  while (mc.getTime() <= tMaxMs) {
-    months.push({ date: new Date(mc), label: mc.toLocaleDateString('fr-FR',{month:'short',year:'2-digit'}) });
+  // Position % depuis un indice de jour — arithmétique entière pure
+  const pct = day => Math.max(0, Math.min(100, (day - tMinDay) / totalDays * 100)).toFixed(3);
+
+  // Enrichir les cours avec leurs bornes en indices
+  courses.forEach((c, i) => {
+    c.firstDay = allFirst[i];
+    c.lastDay  = allLast[i];
+    // Objets Date pour l'affichage (fmtShort dans les tooltips)
+    c.first    = new Date(allFirst[i] * 86400000);
+    c.last     = new Date(allLast[i]  * 86400000);
+  });
+
+  // ── Labels de mois (1er du mois LOCAL → dayIdx exact) ──────────────
+  const months  = [];
+  const tMinDate = new Date(tMinDay * 86400000); // UTC midnight → LOCAL date
+  const mc = new Date(tMinDate.getUTCFullYear(), tMinDate.getUTCMonth(), 1); // 1er du mois LOCAL
+  while (dayIdx(mc) <= tMaxDay) {
+    months.push({ day: dayIdx(mc), label: mc.toLocaleDateString('fr-FR',{month:'short',year:'2-digit'}) });
     mc.setMonth(mc.getMonth() + 1);
   }
 
-  // ── Today : minuit LOCAL (même référence que les labels de mois) ─
-  const today = new Date(); today.setHours(0,0,0,0);
-  const todayPct = (today.getTime() >= tMinMs && today.getTime() <= tMaxMs) ? pct(today) : null;
+  // ── Aujourd'hui : dayIdx depuis composants locaux courants ──────────
+  const todayDay = dayIdx(new Date());
+  const todayPct = (todayDay >= tMinDay && todayDay <= tMaxDay) ? pct(todayDay) : null;
 
-  // ── Charge par semaine (itération en ms) ─────────────────────────
+  // ── Charge par semaine ──────────────────────────────────────────────
   const segments = [];
-  let swMs = tMinMs;
-  while (swMs <= tMaxMs) {
-    const seMs = swMs + 7 * MS_DAY;
-    const swD = new Date(swMs), seD = new Date(seMs);
-    const count = courses.filter(c => c.first.getTime() <= seMs && c.last.getTime() >= swMs).length;
-    segments.push({ start: swD, end: seD, count });
-    swMs = seMs;
+  for (let d = tMinDay; d <= tMaxDay; d += 7) {
+    const dEnd  = d + 7;
+    const count = courses.filter(c => c.firstDay <= dEnd && c.lastDay >= d).length;
+    segments.push({ startDay: d, endDay: dEnd, count,
+                    startDate: new Date(d * 86400000) });
   }
   const maxLoad = Math.max(...segments.map(s => s.count), 1);
   function loadColor(n, max) {
@@ -1716,7 +1735,7 @@ function renderGantt() {
 
   // ── HTML ─────────────────────────────────────────────────────
   const gridLines = months.map(m =>
-    `<div class="gantt-gridline" style="left:${pct(m.date)}%"></div>`
+    `<div class="gantt-gridline" style="left:${pct(m.day)}%" title="${m.label}"></div>`
   ).join('');
 
   const todayEl = todayPct !== null
@@ -1726,14 +1745,14 @@ function renderGantt() {
     : '';
 
   const monthRow = months.map(m =>
-    `<div class="gantt-month" style="left:${pct(m.date)}%">${m.label}</div>`
+    `<div class="gantt-month" style="left:${pct(m.day)}%">${m.label}</div>`
   ).join('');
 
   const courseRows = courses.map((c, i) => {
-    const color  = COLORS[i % COLORS.length];
-    const left   = pct(c.first);
-    const width  = Math.max(0.5, pct(c.last) - +left);
-    const label  = c.name.length > 22 ? c.name.slice(0,20)+'…' : c.name;
+    const color    = COLORS[i % COLORS.length];
+    const left     = pct(c.firstDay);
+    const width    = Math.max(0.5, pct(c.lastDay) - +left);
+    const label    = c.name.length > 22 ? c.name.slice(0,20)+'…' : c.name;
     const barLabel = width > 10 ? `${c.count} session${c.count>1?'s':''}` : '';
     return `
     <div class="gantt-row">
@@ -1742,7 +1761,8 @@ function renderGantt() {
         <span class="gname" title="${c.name}">${label}</span>
       </div>
       <div class="gantt-tl">
-        <div class="gantt-bar" style="left:${left}%;width:${width}%;background:${color}" title="${c.name} · ${fmtShort(c.first)} → ${fmtShort(c.last)} · ${c.count} sessions">
+        <div class="gantt-bar" style="left:${left}%;width:${width}%;background:${color}"
+             title="${c.name} · ${fmtShort(c.first)} → ${fmtShort(c.last)} · ${c.count} sessions">
           <span>${barLabel}</span>
         </div>
       </div>
@@ -1750,11 +1770,11 @@ function renderGantt() {
   }).join('');
 
   const loadSegs = segments.map(s => {
-    const left  = pct(s.start);
-    const width = Math.max(0, pct(s.end) - +left);
+    const left  = pct(s.startDay);
+    const width = Math.max(0, pct(s.endDay) - +left);
     if (width < 0.1 || s.count === 0) return '';
     const color = loadColor(s.count, maxLoad);
-    const title = `${s.count} cours actif${s.count>1?'s':''} — sem. du ${fmtShort(s.start)}`;
+    const title = `${s.count} cours actif${s.count>1?'s':''} — sem. du ${fmtShort(s.startDate)}`;
     return `<div class="gantt-load-seg" style="flex:${width};background:${color}" title="${title}">${s.count > 0 ? s.count : ''}</div>`;
   }).join('');
 
@@ -1774,8 +1794,11 @@ function renderGantt() {
         <div class="gantt-months-row">${monthRow}</div>
         <!-- Lignes de grille + aujourd'hui -->
         <div class="gantt-rows" style="padding-top:8px">
-          ${gridLines}
-          ${todayEl}
+          <!-- Overlay : lignes de grille + aujourd'hui, positionnées dans la même base % que les labels de mois -->
+          <div class="gantt-tl-overlay">
+            ${gridLines}
+            ${todayEl}
+          </div>
           ${courseRows}
           <!-- Ligne de charge -->
           <div class="gantt-load-row">
@@ -1897,7 +1920,7 @@ function renderProgression() {
       <h3><i class="ti ti-calendar-stats"></i> Charge par semaine · survole une barre pour voir les devoirs</h3>
       ${weekRows}
     </div>
-    ${renderGantt()}
+    ${(() => { try { return renderGantt(); } catch(e) { console.error('[Gantt]', e); return ''; } })()}
   `;
 }
 
