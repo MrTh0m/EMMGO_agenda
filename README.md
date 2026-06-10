@@ -5,6 +5,7 @@ Un seul fichier HTML + un backend PHP léger, hébergeable sur ton propre serveu
 
 🔗 **[github.com/MrTh0m/Brightspace_agenda](https://github.com/MrTh0m/Brightspace_agenda)**
 🔗 **[mrth0m.github.io/Brightspace_agenda](https://mrth0m.github.io/Brightspace_agenda)**
+
 📄 **Licence MIT** — libre d'utilisation, modification et redistribution.
 
 ---
