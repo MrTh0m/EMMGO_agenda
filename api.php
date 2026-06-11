@@ -140,10 +140,11 @@ switch ($action) {
         writeJson(CONFIG_FILE, $config);
         respond(['ok'=>true]);
 
-    // Fetcher l'ICS privé (groupe) — auth uniquement, jamais en share
+    // Fetcher l'ICS privé (groupe) — auth OU share token valide
     // Pas de restriction de domaine : l'URL est saisie par l'utilisateur authentifié
     case 'fetch_private_ics':
-        requireAuth();
+        $shareToken = $_GET['share'] ?? ($input['share'] ?? '');
+        if (!isLoggedIn() && !isValidShare($shareToken)) respond(['error'=>'Non autorisé'], 401);
         $picsUrl = $config['private_ics_url'] ?? '';
         if (empty($picsUrl)) respond(['error'=>'Aucune URL ICS privée configurée'], 404);
         $body = curlFetch($picsUrl);

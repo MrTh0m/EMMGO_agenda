@@ -739,12 +739,12 @@ textarea { height:auto;padding:10px 12px;resize:vertical;line-height:1.5; }
         <i class="ti ti-video"></i> Live Sessions
         <span class="badge" id="badge-sessions">0</span>
       </button>
-      <button class="tab" id="tab-prog" onclick="switchTab('prog')">
-        <i class="ti ti-chart-bar"></i> Progression
-      </button>
       <button class="tab" id="tab-groupe" onclick="switchTab('groupe')" style="display:none">
         <i class="ti ti-users"></i> Groupe
         <span class="badge" id="badge-groupe">0</span>
+      </button>
+      <button class="tab" id="tab-prog" onclick="switchTab('prog')">
+        <i class="ti ti-chart-bar"></i> Progression
       </button>
     </div>
 
@@ -782,7 +782,7 @@ textarea { height:auto;padding:10px 12px;resize:vertical;line-height:1.5; }
       <div id="prog-content"></div>
     </div>
 
-    <!-- Groupe pane (connecté uniquement) -->
+    <!-- Groupe pane (connecté + share) -->
     <div id="pane-groupe" style="display:none">
       <div id="groupe-not-configured" class="state-box" style="display:none">
         <i class="ti ti-users big-icon"></i>
@@ -936,6 +936,8 @@ const Auth = {
                 updateBrand();
               }
               Auth._updateUI();
+              // Charger aussi le calendrier groupe en lecture seule
+              loadGroupCalendarShare();
               return;
             }
           }
@@ -1021,15 +1023,14 @@ const Auth = {
       badge.className = 'mode-badge share';
       badge.innerHTML = '<i class="ti ti-eye"></i> Lecture seule';
       if (btnAuth) btnAuth.style.display='none';
-      // Hide settings button and panel — URL privée Brightspace non exposée
       const btnSettings = document.querySelector('button[onclick="toggleSettings()"]');
       if (btnSettings) btnSettings.style.display = 'none';
       document.getElementById('settings-panel').style.display = 'none';
-      // Hide action buttons — no private URLs exposed in share mode
-      // Masquer le bouton install : le start_url du manifest ne contient pas le token
-      // → l'app installée depuis un lien de partage s'ouvrirait en mode invité
       const btnInstall = document.getElementById('btn-install');
       if (btnInstall) btnInstall.classList.remove('visible');
+      // Afficher l'onglet Groupe en lecture seule
+      const tabGroupe = document.getElementById('tab-groupe');
+      if (tabGroupe) tabGroupe.style.display='';
       if (roBanner) roBanner.style.display='flex';
     } else {
       badge.className = 'mode-badge';
@@ -1504,16 +1505,13 @@ function currentIsoWeek(){ return isoWeek(new Date()); }
 // Indice de jour : composants locaux → UTC midnight exact (sans arrondi, sans problème TZ)
 function dayIdx(d){ return Math.floor(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 86400000); }
 
-// Prochain atelier de groupe lié à un devoir ou à sa matière
-function getNextAtelierForDevoir(devoirUid, courseCode, courseName) {
-  if (!allGroupEvents.length) return null;
+// Prochain atelier explicitement lié à CE devoir précis
+function getNextAtelierForDevoir(devoirUid) {
+  if (!allGroupEvents.length || !devoirUid) return null;
   const upcoming = allGroupEvents.filter(e => {
     const tag = getGroupTag(e._uid);
     if (!tag || getDays(e._date) < 0 || detectSubgroup(e)) return false;
-    // Priorité 1 : lié directement à ce devoir
-    if (devoirUid && tag.devoirUid === devoirUid) return true;
-    // Priorité 2 : lié à la même matière
-    return tag.subject === courseCode || tag.subjectName === courseName;
+    return tag.devoirUid === devoirUid; // lien direct uniquement
   });
   if (!upcoming.length) return null;
   return upcoming.sort((a,b) => a._date - b._date)[0];
@@ -1750,6 +1748,17 @@ function updateBadges() {
 function getPrivateIcsUrl(){const f=document.getElementById('private-ics-url');if(f?.dataset.realUrl)return f.dataset.realUrl;return(f?.value||'').trim();}
 function unlockPrivateUrl(){const f=document.getElementById('private-ics-url');if(!f)return;f.value='';delete f.dataset.realUrl;f.removeAttribute('readonly');f.style.color='';f.style.fontStyle='';f.focus();const btn=document.getElementById('btn-unlock-private-url');if(btn)btn.style.display='none';}
 
+// Charger le calendrier groupe en mode lecture seule (share token)
+async function loadGroupCalendarShare(){
+  if(Auth.mode!=='share'||!Auth.shareToken)return;
+  try{
+    const r=await fetch(`${Auth._apiBase}?action=fetch_private_ics&share=${encodeURIComponent(Auth.shareToken)}`,{signal:AbortSignal.timeout(12000)});
+    if(!r.ok)return; // silencieux si pas configuré
+    const txt=await r.text();
+    if(txt.includes('BEGIN:VCALENDAR'))processGroupICS(txt);
+  }catch(_){}
+}
+
 async function loadGroupCalendar(){
   if(Auth.mode!=='connected')return;
   const url=getPrivateIcsUrl();
@@ -1769,6 +1778,8 @@ function processGroupICS(txt){
   const all=parseICS(txt);
   allGroupEvents=all.map(ev=>({...ev,_date:parseDt(ev.DTSTART),_dateEnd:parseDt(ev.DTEND),_title:unescape(ev.SUMMARY||'').trim(),_uid:ev.UID||`grp-${Math.random().toString(36).slice(2)}`})).filter(e=>e._date).sort((a,b)=>a._date-b._date);
   updateGroupBadge();renderGroupTab();
+  renderDevoirs();   // rafraîchir les cartes devoir pour afficher les liens ateliers
+  renderProgression(); // rafraîchir les cartes progression (option A)
   toast(`✓ ${allGroupEvents.length} événements groupe chargés`);
 }
 
@@ -1832,9 +1843,12 @@ function renderGroupList(){
     // Devoir lié dans le bouton d'attribution
     const linkedDevoir=tag?.devoirUid?allDevoirs.find(d=>d.UID===tag.devoirUid):null;
     const tagDevoir=linkedDevoir?` · ${linkedDevoir._title.length>28?linkedDevoir._title.slice(0,26)+'…':linkedDevoir._title}`:'';
-    const tagLabel=tag
-      ?`<button class="group-tag-btn tagged" onclick="toggleTagForm('${ev._uid}')" title="${tag.subjectName||tag.subject}${linkedDevoir?' · '+linkedDevoir._title:''}"><i class="ti ti-tag"></i> ${tag.subjectName||tag.subject}${tagDevoir}</button>`
-      :`<button class="group-tag-btn" onclick="toggleTagForm('${ev._uid}')"><i class="ti ti-tag"></i> Attribuer</button>`;
+    const tagLabel = tag
+      ? Auth.readOnly
+        ? `<span class="group-tag-btn tagged" style="cursor:default"><i class="ti ti-tag"></i> ${tag.subjectName||tag.subject}${tagDevoir}</span>`
+        : `<button class="group-tag-btn tagged" onclick="toggleTagForm('${ev._uid}')" title="${tag.subjectName||tag.subject}${linkedDevoir?' · '+linkedDevoir._title:''}"><i class="ti ti-tag"></i> ${tag.subjectName||tag.subject}${tagDevoir}</button>`
+      : Auth.readOnly ? ''
+      : `<button class="group-tag-btn" onclick="toggleTagForm('${ev._uid}')"><i class="ti ti-tag"></i> Attribuer</button>`;
     const subInfo=sub?`<div class="group-card-meta" style="color:var(--c-orange)"><i class="ti ti-git-branch" style="font-size:10px"></i> Même créneau : ${sub._courseName||sub._courseCode||'Live session'}</div>`:'';
 
     // Options matières
@@ -1903,10 +1917,10 @@ function saveGroupTag(uid, safeUid){
   const code=se.value;const name=se.options[se.selectedIndex]?.dataset.name||code;
   if(!code){clearGroupTag(uid);return;}
   setGroupTag(uid,{subject:code,subjectName:name,devoirUid:de?.value||''});
-  toggleTagForm(uid);renderGroupList();renderGroupBySubject();renderProgression();
+  toggleTagForm(uid);renderGroupList();renderGroupBySubject();renderProgression();renderDevoirs();
   toast(`✓ Attribué à ${name||code}`);
 }
-function clearGroupTag(uid){setGroupTag(uid,null);toggleTagForm(uid);renderGroupList();renderGroupBySubject();renderProgression();toast('Attribution supprimée');}
+function clearGroupTag(uid){setGroupTag(uid,null);toggleTagForm(uid);renderGroupList();renderGroupBySubject();renderProgression();renderDevoirs();toast('Attribution supprimée');}
 
 /* Section 2 : Vue semaine */
 function setGroupView(mode){
@@ -2006,25 +2020,29 @@ function renderGroupBySubject(){
 function renderNextSessionChip() {
   const chip = document.getElementById('next-session-chip');
   if (!chip) return;
-
-  // Trouver la prochaine session (future, triée par date)
   const next = allSessions.filter(s => getDays(s._date) >= 0).sort((a,b) => a._date - b._date)[0];
-
   if (!next) { chip.classList.remove('visible'); return; }
 
   const days  = getDays(next._date);
+  const now   = new Date();
+  const minutesUntil = Math.round((next._date - now) / 60000);
   const hasTime = next._date && (next._date.getHours() + next._date.getMinutes() > 0);
   const timeStr = hasTime ? fmtTime(next._date) : '';
   const endStr  = (hasTime && next._dateEnd) ? ` – ${fmtTime(next._dateEnd)}` : '';
 
-  // Label de timing
-  const whenLabel = days === 0
-    ? `Aujourd'hui${timeStr ? ' à ' + timeStr : ''}`
-    : days === 1
-    ? `Demain${timeStr ? ' à ' + timeStr : ''}`
-    : `${fmtDay(next._date)} ${fmtShort(next._date)}${timeStr ? ' à ' + timeStr : ''}`;
-
-  const badge = days === 0 ? "Aujourd'hui !" : days === 1 ? 'Demain !' : `J−${days}`;
+  // Badge et label selon imminence
+  let badge, whenLabel;
+  if (minutesUntil <= 0) {
+    badge = 'En cours'; whenLabel = 'En cours maintenant';
+  } else if (minutesUntil < 60) {
+    badge = `Dans ${minutesUntil} min`; whenLabel = `Dans ${minutesUntil} min${timeStr?' · '+timeStr:''}`;
+  } else if (days === 0) {
+    badge = "Aujourd'hui !"; whenLabel = `Aujourd'hui${timeStr?' à '+timeStr:''}`;
+  } else if (days === 1) {
+    badge = 'Demain !'; whenLabel = `Demain${timeStr?' à '+timeStr:''}`;
+  } else {
+    badge = `J−${days}`; whenLabel = `${fmtDay(next._date)} ${fmtShort(next._date)}${timeStr?' à '+timeStr:''}`;
+  }
 
   document.getElementById('nsc-title').textContent = next._title || next._courseName || '—';
   document.getElementById('nsc-meta').textContent  = [next._courseName && next._courseCode ? next._courseCode : '', next._instructors].filter(Boolean).join(' · ') || (next._courseName || '');
@@ -2033,21 +2051,26 @@ function renderNextSessionChip() {
 
   const joinBtn = document.getElementById('nsc-join');
   if (next._teamsUrl && !Auth.readOnly) {
-    joinBtn.href = next._teamsUrl;
-    joinBtn.style.display = '';
+    joinBtn.href = next._teamsUrl; joinBtn.style.display = '';
   } else {
     joinBtn.style.display = 'none';
   }
 
-  // Couleur urgente si aujourd'hui ou demain
-  chip.style.background = days <= 1 ? 'var(--bg-orange)' : 'var(--bg-teal)';
-  chip.style.color      = days <= 1 ? 'var(--c-orange)' : 'var(--c-teal)';
-  chip.style.borderColor= days <= 1 ? 'var(--c-orange)44' : 'var(--c-teal)44';
-  const joinStyle = days <= 1 ? 'var(--c-orange)' : 'var(--c-teal)';
-  joinBtn.style.background = joinStyle;
-  document.getElementById('nsc-badge').style.background = joinStyle;
-
+  // Orange si aujourd'hui ou demain, rouge si < 60min
+  const urgent = minutesUntil < 60 && minutesUntil >= 0;
+  chip.style.background  = urgent ? 'var(--bg-red)'    : days <= 1 ? 'var(--bg-orange)' : 'var(--bg-teal)';
+  chip.style.color       = urgent ? 'var(--c-red)'     : days <= 1 ? 'var(--c-orange)'  : 'var(--c-teal)';
+  chip.style.borderColor = urgent ? 'var(--c-red)44'   : days <= 1 ? 'var(--c-orange)44': 'var(--c-teal)44';
+  const accentColor      = urgent ? 'var(--c-red)'     : days <= 1 ? 'var(--c-orange)'  : 'var(--c-teal)';
+  joinBtn.style.background = accentColor;
+  document.getElementById('nsc-badge').style.background = accentColor;
   chip.classList.add('visible');
+
+  // Rafraîchir toutes les minutes quand la session est imminente (< 2h)
+  if (minutesUntil < 120 && minutesUntil >= 0) {
+    clearTimeout(renderNextSessionChip._timer);
+    renderNextSessionChip._timer = setTimeout(() => renderNextSessionChip(), 60000);
+  }
 }
 
 /* ══════════════════════════════════════════════════════════════
@@ -2131,8 +2154,8 @@ function renderDevoirs() {
 
     // Prochain atelier (devoirs collectifs uniquement, si calendrier groupe chargé)
     let atelierBlock = '';
-    if (ev._type === 'collectif' && !Auth.readOnly) {
-      const nextAt = getNextAtelierForDevoir(ev.UID, ev._courseCode, ev._courseName);
+    if (ev._type === 'collectif') {
+      const nextAt = getNextAtelierForDevoir(ev.UID);
       if (nextAt) {
         const atDays = getDays(nextAt._date);
         const atLabel = atDays === 0 ? "Aujourd'hui" : atDays === 1 ? 'Demain' : `${fmtShort(nextAt._date)} · J−${atDays}`;
@@ -2140,9 +2163,9 @@ function renderDevoirs() {
         atelierBlock = `<div class="rendu-check" style="color:var(--c-green);cursor:default">
           <i class="ti ti-users" style="font-size:11px"></i> Prochain atelier : ${atLabel}${atTime}
         </div>`;
-      } else if (allGroupEvents.length > 0) {
+      } else if (allGroupEvents.length > 0 && !Auth.readOnly) {
         atelierBlock = `<div class="rendu-check" style="color:var(--text3);cursor:default">
-          <i class="ti ti-users" style="font-size:11px"></i> Aucun atelier prévu
+          <i class="ti ti-users" style="font-size:11px"></i> Aucun atelier lié — associe-en un dans l'onglet Groupe
         </div>`;
       }
     }
