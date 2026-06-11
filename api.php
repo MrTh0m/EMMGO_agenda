@@ -96,8 +96,9 @@ switch ($action) {
         $data = ['ok'=>true, 'logged_in'=>isLoggedIn(), 'share_enabled'=>!empty($config['share_token']),
                  'share_token'=> isLoggedIn() ? ($config['share_token']??'') : null];
         if (isLoggedIn()) {
-            $data['ics_url']        = $config['ics_url'] ?? '';
-            $data['dashboard_name'] = $config['dashboard_name'] ?? '';
+            $data['ics_url']             = $config['ics_url']             ?? '';
+            $data['private_ics_url']     = $config['private_ics_url']     ?? '';
+            $data['dashboard_name']      = $config['dashboard_name']      ?? '';
         }
         respond($data);
 
@@ -108,7 +109,6 @@ switch ($action) {
         $_SESSION['emmgo_auth'] = true;
         $_SESSION['login_time'] = time();
         session_regenerate_id(true);
-        // Prolonger explicitement le cookie après régénération
         setcookie(session_name(), session_id(), [
             'expires'  => time() + $sessionLifetime,
             'path'     => '/',
@@ -116,7 +116,10 @@ switch ($action) {
             'httponly' => true,
             'samesite' => 'Lax',
         ]);
-        respond(['ok'=>true, 'logged_in'=>true, 'ics_url'=>$config['ics_url']??'', 'dashboard_name'=>$config['dashboard_name']??'']);
+        respond(['ok'=>true, 'logged_in'=>true,
+            'ics_url'         => $config['ics_url']         ?? '',
+            'private_ics_url' => $config['private_ics_url'] ?? '',
+            'dashboard_name'  => $config['dashboard_name']  ?? '']);
 
     // Sauvegarder le nom personnalisé du dashboard
     case 'save_dashboard_name':
@@ -126,6 +129,29 @@ switch ($action) {
         $config['dashboard_name'] = $name;
         writeJson(CONFIG_FILE, $config);
         respond(['ok'=>true]);
+
+    // Sauvegarder l'URL ICS privée (groupe de travail) — pas de restriction de domaine
+    case 'save_private_ics_url':
+        requireAuth();
+        $url = trim($input['private_ics_url'] ?? '');
+        if (!empty($url) && !filter_var($url, FILTER_VALIDATE_URL)) respond(['error'=>'URL invalide'], 400);
+        if (!empty($url) && parse_url($url, PHP_URL_SCHEME) !== 'https') respond(['error'=>'HTTPS requis'], 400);
+        $config['private_ics_url'] = $url;
+        writeJson(CONFIG_FILE, $config);
+        respond(['ok'=>true]);
+
+    // Fetcher l'ICS privé (groupe) — auth uniquement, jamais en share
+    // Pas de restriction de domaine : l'URL est saisie par l'utilisateur authentifié
+    case 'fetch_private_ics':
+        requireAuth();
+        $picsUrl = $config['private_ics_url'] ?? '';
+        if (empty($picsUrl)) respond(['error'=>'Aucune URL ICS privée configurée'], 404);
+        $body = curlFetch($picsUrl);
+        if (!$body) respond(['error'=>'Impossible de récupérer le calendrier privé'], 502);
+        header('Content-Type: text/calendar; charset=utf-8');
+        header('Cache-Control: no-store');
+        echo $body;
+        exit;
 
     case 'logout':
         $_SESSION = []; session_destroy();
