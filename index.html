@@ -713,11 +713,11 @@ textarea { height:auto;padding:10px 12px;resize:vertical;line-height:1.5; }
     </div>
     <div class="stats" id="stats-grid"></div>
 
-    <!-- Prochaine live session -->
+    <!-- Prochain événement (live session ou atelier groupe) -->
     <div class="next-session-chip" id="next-session-chip" onclick="switchTab('sessions')">
-      <i class="ti ti-video nsc-icon"></i>
+      <i class="ti ti-video nsc-icon" id="nsc-icon"></i>
       <div class="nsc-body">
-        <span class="nsc-label">Prochaine live session</span>
+        <span class="nsc-label" id="nsc-label">Prochaine live session</span>
         <span class="nsc-title" id="nsc-title">—</span>
         <span class="nsc-meta" id="nsc-meta"></span>
       </div>
@@ -932,6 +932,9 @@ const Auth = {
               Auth.shareToken = shareParam;
               const raw = sd.state?.rendus;
               Auth._cache = (raw && typeof raw === 'object' && !Array.isArray(raw)) ? raw : {};
+              // Attributions matière/devoir des ateliers (lecture seule)
+              const tags = sd.state?.group_tags;
+              groupTagsCache = (tags && typeof tags === 'object' && !Array.isArray(tags)) ? tags : {};
               // Nom personnalisé défini par le propriétaire
               if (sd.dashboard_name) {
                 AppMeta.customName = sd.dashboard_name;
@@ -1709,6 +1712,8 @@ function processICS(txt) {
         if (!sd?.ok) return;
         const raw = sd.state?.rendus;
         Auth._cache = (raw && typeof raw === 'object' && !Array.isArray(raw)) ? raw : {};
+        const tags = sd.state?.group_tags;
+        if (tags && typeof tags === 'object' && !Array.isArray(tags)) groupTagsCache = tags;
         if (sd.dashboard_name && !AppMeta.customName) {
           AppMeta.customName = sd.dashboard_name;
           updateBrand();
@@ -1716,6 +1721,8 @@ function processICS(txt) {
         renderDevoirs();
         renderStats();
         renderProgression();
+        renderGroupTab();
+        renderNextSessionChip();
       }).catch(() => {});
   }
 }
@@ -1831,6 +1838,7 @@ function processGroupICS(txt){
   updateGroupBadge();renderGroupTab();
   renderDevoirs();   // rafraîchir les cartes devoir pour afficher les liens ateliers
   renderProgression(); // rafraîchir les cartes progression (option A)
+  renderNextSessionChip(); // le prochain événement peut être un atelier
   toast(`✓ ${allGroupEvents.length} événements groupe chargés`);
 }
 
@@ -2079,7 +2087,11 @@ function renderGroupBySubject(){
 function renderNextSessionChip() {
   const chip = document.getElementById('next-session-chip');
   if (!chip) return;
-  const next = allSessions.filter(s => getDays(s._date) >= 0).sort((a,b) => a._date - b._date)[0];
+
+  // Fusionner live sessions Brightspace + ateliers groupe, trier par date
+  const liveItems  = allSessions.filter(s => getDays(s._date) >= 0).map(s => ({ ...s, _kind: 'live' }));
+  const groupItems = allGroupEvents.filter(e => getDays(e._date) >= 0).map(e => ({ ...e, _kind: 'group' }));
+  const next = [...liveItems, ...groupItems].sort((a,b) => a._date - b._date)[0];
   if (!next) { chip.classList.remove('visible'); return; }
 
   const days  = getDays(next._date);
@@ -2103,29 +2115,50 @@ function renderNextSessionChip() {
     badge = `J−${days}`; whenLabel = `${fmtDay(next._date)} ${fmtShort(next._date)}${timeStr?' à '+timeStr:''}`;
   }
 
-  document.getElementById('nsc-title').textContent = next._title || next._courseName || '—';
-  document.getElementById('nsc-meta').textContent  = [next._courseName && next._courseCode ? next._courseCode : '', next._instructors].filter(Boolean).join(' · ') || (next._courseName || '');
+  // Contenu spécifique selon le type d'événement
+  const labelEl = document.getElementById('nsc-label');
+  const iconEl  = document.getElementById('nsc-icon');
+  let title, meta;
+
+  if (next._kind === 'live') {
+    labelEl.textContent = 'Prochaine live session';
+    iconEl.className = 'ti ti-video nsc-icon';
+    title = next._title || next._courseName || '—';
+    meta  = [next._courseName && next._courseCode ? next._courseCode : '', next._instructors].filter(Boolean).join(' · ') || (next._courseName || '');
+  } else {
+    labelEl.textContent = 'Prochain atelier';
+    iconEl.className = 'ti ti-users nsc-icon';
+    title = next._title || '—';
+    const tag = getGroupTag(next._uid);
+    const linkedDevoir = tag?.devoirUid ? allDevoirs.find(d => d.UID === tag.devoirUid) : null;
+    meta = [tag?.subjectName || tag?.subject, linkedDevoir?._title].filter(Boolean).join(' · ');
+  }
+
+  document.getElementById('nsc-title').textContent = title;
+  document.getElementById('nsc-meta').textContent  = meta;
   document.getElementById('nsc-when').textContent  = whenLabel + endStr;
   document.getElementById('nsc-badge').textContent = badge;
 
+  // Bouton Rejoindre : uniquement pour les live sessions
   const joinBtn = document.getElementById('nsc-join');
-  if (next._teamsUrl && !Auth.readOnly) {
+  if (next._kind === 'live' && next._teamsUrl && !Auth.readOnly) {
     joinBtn.href = next._teamsUrl; joinBtn.style.display = '';
   } else {
     joinBtn.style.display = 'none';
   }
 
-  // Orange si aujourd'hui ou demain, rouge si < 60min
+  // Orange si aujourd'hui ou demain, rouge si < 60min, vert pour un atelier non-imminent
   const urgent = minutesUntil < 60 && minutesUntil >= 0;
-  chip.style.background  = urgent ? 'var(--bg-red)'    : days <= 1 ? 'var(--bg-orange)' : 'var(--bg-teal)';
-  chip.style.color       = urgent ? 'var(--c-red)'     : days <= 1 ? 'var(--c-orange)'  : 'var(--c-teal)';
-  chip.style.borderColor = urgent ? 'var(--c-red)44'   : days <= 1 ? 'var(--c-orange)44': 'var(--c-teal)44';
-  const accentColor      = urgent ? 'var(--c-red)'     : days <= 1 ? 'var(--c-orange)'  : 'var(--c-teal)';
-  joinBtn.style.background = accentColor;
-  document.getElementById('nsc-badge').style.background = accentColor;
+  const baseColor = next._kind === 'group' ? 'green' : 'teal';
+  const colorKey  = urgent ? 'red' : days <= 1 ? 'orange' : baseColor;
+  chip.style.background  = `var(--bg-${colorKey})`;
+  chip.style.color       = `var(--c-${colorKey})`;
+  chip.style.borderColor = `var(--c-${colorKey})44`;
+  joinBtn.style.background = `var(--c-${colorKey})`;
+  document.getElementById('nsc-badge').style.background = `var(--c-${colorKey})`;
   chip.classList.add('visible');
 
-  // Rafraîchir toutes les minutes quand la session est imminente (< 2h)
+  // Rafraîchir toutes les minutes quand l'événement est imminent (< 2h)
   if (minutesUntil < 120 && minutesUntil >= 0) {
     clearTimeout(renderNextSessionChip._timer);
     renderNextSessionChip._timer = setTimeout(() => renderNextSessionChip(), 60000);
