@@ -844,9 +844,9 @@ textarea { height:auto;padding:10px 12px;resize:vertical;line-height:1.5; }
 ══════════════════════════════════════════════════════════════ */
 const STORAGE_KEY      = 'emmgo_ics_url_v2';
 const RENDU_KEY        = 'emmgo_rendu_v1';
+const GROUP_TAGS_KEY   = 'emmgo_group_tags_v1';
 const THEME_KEY        = 'emmgo_theme';
-const PRIVATE_ICS_KEY  = 'emmgo_private_ics_url';
-const PRIVATE_TAGS_KEY = 'emmgo_group_tags';
+const PRIVATE_ICS_KEY  = 'emmgo_private_ics_url_v1';
 const PAGE_SIZE        = 5;
 
 // ── État onglet Groupe ──────────────────────────────────────────
@@ -978,12 +978,31 @@ const Auth = {
         // Not logged in but API available → show login button
         Auth.mode = 'guest';
         Auth._updateUI(true); // showLoginBtn=true
+        Auth._initGuestGroup();
       }
     } catch(_) {
       // api.php absent or unreachable → pure guest mode
       Auth.mode     = 'guest';
       Auth.readOnly = false;
       Auth._updateUI();
+      Auth._initGuestGroup();
+    }
+  },
+
+  // Initialise l'onglet Groupe en mode invité depuis localStorage
+  _initGuestGroup() {
+    try {
+      const tags = JSON.parse(localStorage.getItem(GROUP_TAGS_KEY) || '{}');
+      if (tags && typeof tags === 'object') groupTagsCache = tags;
+    } catch(_) {}
+    let url = '';
+    try { url = localStorage.getItem(PRIVATE_ICS_KEY) || ''; } catch(_) {}
+    if (url) {
+      const f = document.getElementById('private-ics-url');
+      if (f) f.value = url;
+      loadGroupCalendar();
+    } else {
+      showGroupNotConfigured();
     }
   },
 
@@ -1827,7 +1846,7 @@ function setGroupTag(uid,data){
   if(Auth.mode==='connected'){
     Auth._saveServerState();
   } else {
-    try{localStorage.setItem(PRIVATE_TAGS_KEY,JSON.stringify(groupTagsCache));}catch(_){}
+    try{localStorage.setItem(GROUP_TAGS_KEY,JSON.stringify(groupTagsCache));}catch(_){}
   }
 }
 
