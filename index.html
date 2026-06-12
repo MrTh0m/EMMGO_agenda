@@ -383,6 +383,21 @@ textarea { height:auto;padding:10px 12px;resize:vertical;line-height:1.5; }
 .read-only-banner { display:flex;align-items:center;gap:8px;background:var(--bg-violet);color:var(--c-violet);border:1px solid var(--c-violet)44;border-radius:8px;padding:8px 14px;font-size:13px;margin-bottom:16px; }
 .auth-section { border-top:1px solid var(--border);margin-top:14px;padding-top:14px; }
 .auth-section h4 { font-size:12px;font-weight:600;color:var(--text2);margin-bottom:8px;display:flex;align-items:center;gap:5px; }
+/* ── Notifications ── */
+.notif-section { border-top:1px solid var(--border);margin-top:14px;padding-top:14px; }
+.notif-section h3 { font-size:13px;font-weight:600;margin-bottom:6px;display:flex;align-items:center;gap:6px; }
+.notif-row { display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 0;border-bottom:0.5px solid var(--border); }
+.notif-row:last-of-type { border-bottom:none; }
+.notif-row-label { font-size:12px;display:flex;flex-direction:column;gap:1px;min-width:0; }
+.notif-row-label strong { font-weight:600; }
+.notif-row-label small { font-size:10px;color:var(--text3);font-weight:400; }
+.switch { position:relative;width:38px;height:22px;flex-shrink:0;display:inline-block; }
+.switch input { opacity:0;width:0;height:0; }
+.switch .slider { position:absolute;cursor:pointer;inset:0;background:var(--border2);border-radius:22px;transition:.2s; }
+.switch .slider:before { content:'';position:absolute;width:16px;height:16px;left:3px;bottom:3px;background:#fff;border-radius:50%;transition:.2s; }
+.switch input:checked+.slider { background:var(--c-blue); }
+.switch input:checked+.slider:before { transform:translateX(16px); }
+.switch input:disabled+.slider { opacity:.4;cursor:not-allowed; }
 
 /* ── Footer ── */
 .note { font-size:11px;color:var(--text3);text-align:center;margin-top:24px;line-height:1.8; }
@@ -609,6 +624,7 @@ textarea { height:auto;padding:10px 12px;resize:vertical;line-height:1.5; }
 
   <!-- Settings panel -->
   <div class="settings-panel" id="settings-panel" style="display:none">
+    <div id="settings-ics-section">
     <h3><i class="ti ti-link"></i> URL du calendrier ICS Brightspace</h3>
     <div class="field-row">
       <input type="url" id="ics-url"
@@ -632,6 +648,7 @@ textarea { height:auto;padding:10px 12px;resize:vertical;line-height:1.5; }
         <strong>Récupérer le .ics :</strong> Brightspace → Agenda → icône abonnement → Télécharger le calendrier
         → ouvre avec un éditeur texte → Ctrl+A → colle ici.
       </div>
+    </div>
     </div>
     <!-- Auth & share section (hidden in guest mode) -->
     <!-- URL ICS privée (groupe) — visible en mode connecté uniquement -->
@@ -680,6 +697,71 @@ textarea { height:auto;padding:10px 12px;resize:vertical;line-height:1.5; }
       <button class="btn" style="margin-top:10px;font-size:12px;height:30px;color:var(--c-red);border-color:var(--c-red)44" onclick="Auth.logout()">
         <i class="ti ti-logout"></i> Se déconnecter
       </button>
+    </div>
+
+    <!-- Notifications — toujours visible, réglages locaux à cet appareil -->
+    <div class="notif-section" id="notif-section">
+      <h3><i class="ti ti-bell"></i> Notifications</h3>
+      <p style="font-size:11px;color:var(--text3);margin:-4px 0 10px">
+        Réglages propres à cet appareil/navigateur (stockés localement).
+      </p>
+
+      <div class="notif-row">
+        <div class="notif-row-label">
+          <strong>Activer les notifications</strong>
+          <small id="notif-permission-status">Autorisation requise</small>
+        </div>
+        <label class="switch">
+          <input type="checkbox" id="notif-master" onchange="Notif.toggleMaster(this.checked)">
+          <span class="slider"></span>
+        </label>
+      </div>
+
+      <div id="notif-options" style="display:none">
+        <div class="notif-row">
+          <div class="notif-row-label">
+            <strong>Devoir non rendu approchant</strong>
+            <small>J−3 et J−1 avant l'échéance</small>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="notif-deadline" onchange="Notif.save()">
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="notif-row">
+          <div class="notif-row-label">
+            <strong>Devoir collectif sans atelier</strong>
+            <small>Aucun atelier lié, échéance ≤ 7 jours</small>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="notif-no-atelier" onchange="Notif.save()">
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="notif-row">
+          <div class="notif-row-label">
+            <strong>Programme du jour</strong>
+            <small>Live sessions et ateliers prévus aujourd'hui</small>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="notif-today" onchange="Notif.save()">
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="notif-row">
+          <div class="notif-row-label">
+            <strong>Événement imminent</strong>
+            <small>15 minutes avant une session ou un atelier</small>
+          </div>
+          <label class="switch">
+            <input type="checkbox" id="notif-imminent" onchange="Notif.save()">
+            <span class="slider"></span>
+          </label>
+        </div>
+        <button class="btn" style="margin-top:8px;font-size:11px;height:28px" onclick="Notif.test()">
+          <i class="ti ti-bell-ringing"></i> Tester une notification
+        </button>
+      </div>
     </div>
   </div>
 
@@ -847,6 +929,8 @@ const RENDU_KEY        = 'emmgo_rendu_v1';
 const GROUP_TAGS_KEY   = 'emmgo_group_tags_v1';
 const THEME_KEY        = 'emmgo_theme';
 const PRIVATE_ICS_KEY  = 'emmgo_private_ics_url_v1';
+const NOTIF_KEY        = 'emmgo_notif_settings_v1';
+const NOTIF_SENT_KEY   = 'emmgo_notif_sent_v1';
 const PAGE_SIZE        = 5;
 
 // ── État onglet Groupe ──────────────────────────────────────────
@@ -854,6 +938,168 @@ let allGroupEvents  = [];   // Événements du calendrier privé
 let groupTagsCache  = {};   // { uid: { subject, subjectName, devoirUid } }
 let groupViewMode   = 'grid';
 let groupWeekOff    = 0;    // 0 = semaine courante
+
+/* ══════════════════════════════════════════════════════════════
+   Notifications (navigateur, app ouverte) — réglages locaux
+══════════════════════════════════════════════════════════════ */
+const Notif = {
+  settings: { enabled:false, deadline:true, noAtelier:true, today:true, imminent:true },
+  sent: {},
+  _timer: null,
+
+  load() {
+    try { Object.assign(this.settings, JSON.parse(localStorage.getItem(NOTIF_KEY)||'{}')); } catch(_) {}
+    try { this.sent = JSON.parse(localStorage.getItem(NOTIF_SENT_KEY)||'{}') || {}; } catch(_) { this.sent = {}; }
+    // Purger les entrées de plus de 3 jours
+    const cutoff = Date.now() - 3*86400000;
+    Object.keys(this.sent).forEach(k => { if (this.sent[k] < cutoff) delete this.sent[k]; });
+    this._saveSent();
+    this._syncUI();
+    if (this.settings.enabled && 'Notification' in window && Notification.permission === 'granted') {
+      this._startTimer();
+    }
+  },
+
+  save() {
+    this.settings.deadline  = document.getElementById('notif-deadline')?.checked ?? this.settings.deadline;
+    this.settings.noAtelier = document.getElementById('notif-no-atelier')?.checked ?? this.settings.noAtelier;
+    this.settings.today     = document.getElementById('notif-today')?.checked ?? this.settings.today;
+    this.settings.imminent  = document.getElementById('notif-imminent')?.checked ?? this.settings.imminent;
+    try { localStorage.setItem(NOTIF_KEY, JSON.stringify(this.settings)); } catch(_) {}
+  },
+
+  _syncUI() {
+    const master  = document.getElementById('notif-master');
+    const options = document.getElementById('notif-options');
+    const status  = document.getElementById('notif-permission-status');
+    if (!master) return;
+
+    if (!('Notification' in window)) {
+      status.textContent = "Non supportées par ce navigateur";
+      master.disabled = true;
+      return;
+    }
+    const perm = Notification.permission;
+    if (perm === 'denied') {
+      status.textContent = "Bloquées — autorise-les dans les réglages du site";
+      master.checked = false; master.disabled = true;
+      options.style.display = 'none';
+    } else if (perm === 'granted') {
+      status.textContent = 'Autorisées';
+      master.disabled = false;
+      master.checked = !!this.settings.enabled;
+      options.style.display = master.checked ? '' : 'none';
+    } else {
+      status.textContent = 'Autorisation requise';
+      master.disabled = false;
+      master.checked = false;
+      options.style.display = 'none';
+    }
+    const d=document.getElementById('notif-deadline'),n=document.getElementById('notif-no-atelier'),
+          t=document.getElementById('notif-today'),i=document.getElementById('notif-imminent');
+    if(d)d.checked=this.settings.deadline; if(n)n.checked=this.settings.noAtelier;
+    if(t)t.checked=this.settings.today;    if(i)i.checked=this.settings.imminent;
+  },
+
+  async toggleMaster(checked) {
+    if (!('Notification' in window)) return;
+    if (checked) {
+      let perm = Notification.permission;
+      if (perm === 'default') perm = await Notification.requestPermission();
+      if (perm !== 'granted') {
+        this.settings.enabled = false;
+        this._syncUI();
+        toast('⚠ Notifications refusées par le navigateur');
+        return;
+      }
+      this.settings.enabled = true;
+      this._startTimer();
+      this.check();
+    } else {
+      this.settings.enabled = false;
+      this._stopTimer();
+    }
+    try { localStorage.setItem(NOTIF_KEY, JSON.stringify(this.settings)); } catch(_) {}
+    this._syncUI();
+  },
+
+  _startTimer() { this._stopTimer(); this._timer = setInterval(()=>this.check(), 60000); },
+  _stopTimer()  { if (this._timer) clearInterval(this._timer); this._timer = null; },
+
+  _saveSent() { try { localStorage.setItem(NOTIF_SENT_KEY, JSON.stringify(this.sent)); } catch(_) {} },
+
+  _notify(id, title, body) {
+    if (this.sent[id]) return;
+    if (!('Notification' in window) || Notification.permission !== 'granted') return;
+    try { new Notification(title, { body, tag:id, icon:'icon-192.png', badge:'icon-192.png' }); } catch(_) {}
+    this.sent[id] = Date.now();
+    this._saveSent();
+  },
+
+  test() {
+    if (!('Notification' in window) || Notification.permission !== 'granted') {
+      toast('⚠ Active d\'abord les notifications');
+      return;
+    }
+    try { new Notification('Brightspace Agenda', { body:'Notification de test ✓', icon:'icon-192.png' }); } catch(_) {}
+  },
+
+  // Vérification périodique — n'envoie chaque notification qu'une seule fois (anti-spam via this.sent)
+  check() {
+    if (!this.settings.enabled || !('Notification' in window) || Notification.permission !== 'granted') return;
+    const todayKey = new Date().toISOString().slice(0,10);
+
+    // 1. Devoir non rendu approchant (J-3 et J-1)
+    if (this.settings.deadline) {
+      allDevoirs.forEach(d => {
+        const days = getDays(d._date);
+        if ((days===3 || days===1) && !effectivelyRendu(d)) {
+          this._notify(`deadline-${d.UID}-J${days}`,
+            days===1 ? 'Devoir à rendre demain' : 'Devoir à rendre dans 3 jours',
+            `${d._title}${d._courseName?' · '+d._courseName:''} — échéance le ${fmtShort(d._date)}`);
+        }
+      });
+    }
+
+    // 2. Devoir collectif sans atelier planifié (échéance ≤ 7j)
+    if (this.settings.noAtelier && allGroupEvents.length>0) {
+      allDevoirs.forEach(d => {
+        const days = getDays(d._date);
+        if (d._type==='collectif' && days>=0 && days<=7 && !effectivelyRendu(d) && !getNextAtelierForDevoir(d.UID)) {
+          this._notify(`noatelier-${d.UID}`,
+            'Atelier non planifié',
+            `Aucun atelier lié pour "${d._title}" (échéance le ${fmtShort(d._date)})`);
+        }
+      });
+    }
+
+    // 3. Programme du jour (une seule fois par jour)
+    if (this.settings.today) {
+      const todaysLive  = allSessions.filter(s=>s._date&&getDays(s._date)===0);
+      const todaysGroup = allGroupEvents.filter(e=>e._date&&getDays(e._date)===0);
+      if (todaysLive.length || todaysGroup.length) {
+        const parts=[];
+        if (todaysLive.length)  parts.push(`${todaysLive.length} live session${todaysLive.length>1?'s':''}`);
+        if (todaysGroup.length) parts.push(`${todaysGroup.length} atelier${todaysGroup.length>1?'s':''}`);
+        this._notify(`today-${todayKey}`, "Programme d'aujourd'hui", parts.join(' · '));
+      }
+    }
+
+    // 4. Événement imminent (live session ou atelier dans ≤ 15 min)
+    if (this.settings.imminent) {
+      const now = Date.now();
+      [...allSessions, ...allGroupEvents].forEach(e => {
+        if (!e._date) return;
+        const minutesUntil = Math.round((e._date - now)/60000);
+        if (minutesUntil>0 && minutesUntil<=15) {
+          const id = e._uid || e.UID;
+          if (!id) return;
+          this._notify(`imminent-${id}`, `Dans ${minutesUntil} min`, e._title || e._courseName || 'Événement');
+        }
+      });
+    }
+  }
+};
 
 const CORS_PROXIES = [
   u => ({ url:`proxy.php?url=${encodeURIComponent(u)}`,                           isJson:false }),
@@ -1047,9 +1293,11 @@ const Auth = {
       badge.className = 'mode-badge share';
       badge.innerHTML = '<i class="ti ti-eye"></i> Lecture seule';
       if (btnAuth) btnAuth.style.display='none';
-      const btnSettings = document.querySelector('button[onclick="toggleSettings()"]');
-      if (btnSettings) btnSettings.style.display = 'none';
-      document.getElementById('settings-panel').style.display = 'none';
+      // Masquer les sections "source de données" — pas d'édition en lecture seule
+      const icsSection = document.getElementById('settings-ics-section');
+      if (icsSection) icsSection.style.display = 'none';
+      const privateSectionRO = document.getElementById('private-url-section');
+      if (privateSectionRO) privateSectionRO.classList.remove('visible');
       const btnInstall = document.getElementById('btn-install');
       if (btnInstall) btnInstall.classList.remove('visible');
       // Afficher l'onglet Groupe en lecture seule
@@ -1703,6 +1951,7 @@ function processICS(txt) {
   renderProgression();
   PWA.markFreshData();  // horodater pour la bannière offline
   toast(`✓ ${allDevoirs.length} devoirs · ${allSessions.length} sessions`);
+  Notif.check();
 
   // In share mode, refresh state from server once more in case of race condition
   if (Auth.mode === 'share' && Auth.shareToken) {
@@ -1839,6 +2088,7 @@ function processGroupICS(txt){
   renderDevoirs();   // rafraîchir les cartes devoir pour afficher les liens ateliers
   renderProgression(); // rafraîchir les cartes progression (option A)
   renderNextSessionChip(); // le prochain événement peut être un atelier
+  Notif.check();
   toast(`✓ ${allGroupEvents.length} événements groupe chargés`);
 }
 
@@ -2692,6 +2942,7 @@ window.addEventListener('DOMContentLoaded', async () => {
   try { const saved=localStorage.getItem(STORAGE_KEY); if(saved){ document.getElementById('ics-url').value=saved; document.getElementById('ics-url-setup').value=saved; } } catch(_) {}
   // Auth detection (guest / connected / share)
   await Auth.init();
+  Notif.load();
   loadCalendar();
 });
 </script>
