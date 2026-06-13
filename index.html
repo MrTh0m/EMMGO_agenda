@@ -171,8 +171,11 @@ textarea { height:auto;padding:10px 12px;resize:vertical;line-height:1.5; }
 }
 .chip.active .chip-count { background:rgba(255,255,255,.25); }
 .disc-filters { margin-top:-10px;margin-bottom:16px;flex-wrap:wrap;gap:6px; }
+.filter-toggles {
+  margin-left:auto;display:flex;align-items:center;gap:14px;flex-shrink:0;
+}
 .past-label {
-  margin-left:auto;display:flex;align-items:center;gap:6px;
+  display:flex;align-items:center;gap:6px;
   font-size:12px;color:var(--text2);cursor:pointer;
 }
 .past-label input { cursor:pointer;accent-color:var(--c-blue); }
@@ -497,6 +500,7 @@ textarea { height:auto;padding:10px 12px;resize:vertical;line-height:1.5; }
   .disc-filters::-webkit-scrollbar { display: none; }
   .chip       { height: 28px; padding: 0 10px; font-size: 11px; flex-shrink: 0; }
   .past-label { flex-shrink: 0; font-size: 11px; white-space: nowrap; }
+  .filter-toggles { gap: 10px; }
 
   /* ── Cards : disposition verticale ── */
   .card-item  { flex-direction: column; gap: 8px; padding: 12px; }
@@ -836,10 +840,16 @@ textarea { height:auto;padding:10px 12px;resize:vertical;line-height:1.5; }
         <button class="chip active" data-filter="all"        onclick="setFilter(this,'devoirs')"><i class="ti ti-list"></i> Tous</button>
         <button class="chip"        data-filter="individuel" onclick="setFilter(this,'devoirs')"><i class="ti ti-user"></i> Individuel</button>
         <button class="chip"        data-filter="collectif"  onclick="setFilter(this,'devoirs')"><i class="ti ti-users"></i> Collectif</button>
-        <label class="past-label">
-          <input type="checkbox" id="show-past-devoirs" onchange="renderDevoirs()">
-          Passés (<span id="past-count-devoirs">0</span>)
-        </label>
+        <div class="filter-toggles">
+          <label class="past-label">
+            <input type="checkbox" id="show-past-devoirs" onchange="resetPaginationAndRender('devoirs')">
+            Passés (<span id="past-count-devoirs">0</span>)
+          </label>
+          <label class="past-label">
+            <input type="checkbox" id="show-rendus-devoirs" checked onchange="resetPaginationAndRender('devoirs')">
+            Rendus
+          </label>
+        </div>
       </div>
       <div class="filters disc-filters" id="disc-filter-devoirs" style="display:none"></div>
       <div class="list" id="devoirs-list"></div>
@@ -896,10 +906,16 @@ textarea { height:auto;padding:10px 12px;resize:vertical;line-height:1.5; }
         <div class="group-section">
           <div class="group-section-header">
             <h3 class="group-section-title"><i class="ti ti-calendar-event"></i> Ateliers</h3>
-            <label class="past-label" style="font-size:12px;color:var(--text2);cursor:pointer;display:flex;align-items:center;gap:6px">
-              <input type="checkbox" id="show-past-groupe" onchange="renderGroupList()" style="cursor:pointer;accent-color:var(--c-blue)">
-              Passés
-            </label>
+            <div style="display:flex;align-items:center;gap:12px">
+              <label class="past-label" style="font-size:12px;color:var(--text2);cursor:pointer;display:flex;align-items:center;gap:6px">
+                <input type="checkbox" id="show-past-groupe" onchange="renderGroupList()" style="cursor:pointer;accent-color:var(--c-blue)">
+                Passés
+              </label>
+              <label class="past-label" style="font-size:12px;color:var(--text2);cursor:pointer;display:flex;align-items:center;gap:6px">
+                <input type="checkbox" id="show-hidden-groupe" onchange="renderGroupList()" style="cursor:pointer;accent-color:var(--c-blue)">
+                Masqués
+              </label>
+            </div>
           </div>
           <div id="group-list"></div>
         </div>
@@ -1077,7 +1093,7 @@ const Notif = {
     if (this.settings.noAtelier && allGroupEvents.length>0) {
       allDevoirs.forEach(d => {
         const days = getDays(d._date);
-        if (d._type==='collectif' && days>=0 && days<=7 && !effectivelyRendu(d) && !getNextAtelierForDevoir(d.UID)) {
+        if (d._type==='collectif' && days>=0 && days<=7 && !effectivelyRendu(d) && !getLinkedAtelierForDevoir(d.UID)) {
           this._notify(`noatelier-${d.UID}`,
             'Atelier non planifié',
             `Aucun atelier lié pour "${d._title}" (échéance le ${fmtShort(d._date)})`);
@@ -1088,7 +1104,7 @@ const Notif = {
     // 3. Programme du jour (une seule fois par jour)
     if (this.settings.today) {
       const todaysLive  = allSessions.filter(s=>s._date&&getDays(s._date)===0);
-      const todaysGroup = allGroupEvents.filter(e=>e._date&&getDays(e._date)===0);
+      const todaysGroup = activeGroupEvents().filter(e=>e._date&&getDays(e._date)===0);
       if (todaysLive.length || todaysGroup.length) {
         const parts=[];
         if (todaysLive.length)  parts.push(`${todaysLive.length} live session${todaysLive.length>1?'s':''}`);
@@ -1100,7 +1116,7 @@ const Notif = {
     // 4. Événement imminent (live session ou atelier dans ≤ 15 min)
     if (this.settings.imminent) {
       const now = Date.now();
-      [...allSessions, ...allGroupEvents].forEach(e => {
+      [...allSessions, ...activeGroupEvents()].forEach(e => {
         if (!e._date) return;
         const minutesUntil = Math.round((e._date - now)/60000);
         if (minutesUntil>0 && minutesUntil<=15) {
@@ -1794,16 +1810,20 @@ function currentIsoWeek(){ return isoWeek(new Date()); }
 // Indice de jour : composants locaux → UTC midnight exact (sans arrondi, sans problème TZ)
 function dayIdx(d){ return Math.floor(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / 86400000); }
 
-// Prochain atelier explicitement lié à CE devoir précis
-function getNextAtelierForDevoir(devoirUid) {
+// Atelier explicitement lié à CE devoir précis — futur (prioritaire) ou passé le plus récent
+function getLinkedAtelierForDevoir(devoirUid) {
   if (!allGroupEvents.length || !devoirUid) return null;
-  const upcoming = allGroupEvents.filter(e => {
+  const linked = allGroupEvents.filter(e => {
+    if (isIgnored(e._uid)) return false;
     const tag = getGroupTag(e._uid);
-    if (!tag || getDays(e._date) < 0 || detectSubgroup(e)) return false;
-    return tag.devoirUid === devoirUid; // lien direct uniquement
+    return tag && tag.devoirUid === devoirUid && !detectSubgroup(e);
   });
-  if (!upcoming.length) return null;
-  return upcoming.sort((a,b) => a._date - b._date)[0];
+  if (!linked.length) return null;
+  const upcoming = linked.filter(e => getDays(e._date) >= 0).sort((a,b) => a._date - b._date);
+  if (upcoming.length) return { event: upcoming[0], isPast: false };
+  const past = linked.filter(e => getDays(e._date) < 0).sort((a,b) => b._date - a._date);
+  if (past.length) return { event: past[0], isPast: true };
+  return null;
 }
 
 function urgColor(n){if(n<0)return'var(--c-grey)';if(n<=3)return'var(--c-red)';if(n<=7)return'var(--c-orange)';if(n<=14)return'#5a9620';return'var(--c-green)';}
@@ -2005,6 +2025,12 @@ function setFilter(btn,pane) {
   if(pane==='devoirs'){filterDevoirs=btn.dataset.filter;shownDevoirs=PAGE_SIZE;renderDevoirs();}
   if(pane==='sessions'){filterSessions=btn.dataset.filter;shownSessions=PAGE_SIZE;renderSessions();}
 }
+// Réinitialise la pagination puis rafraîchit — utilisé par les toggles "Passés"/"Rendus"
+// pour que le changement de filtre soit toujours visible immédiatement
+function resetPaginationAndRender(pane) {
+  if (pane==='devoirs') { shownDevoirs=PAGE_SIZE; renderDevoirs(); }
+  if (pane==='sessions'){ shownSessions=PAGE_SIZE; renderSessions(); }
+}
 function setDisciplineFilter(pane,key,btn) {
   document.getElementById(`disc-filter-${pane}`).querySelectorAll('.chip').forEach(b=>b.classList.remove('active'));
   btn.classList.add('active');
@@ -2120,8 +2146,23 @@ function setGroupTag(uid,data){
   }
 }
 
+// Événements groupe "ignorés" (non pertinents — ni atelier, ni sous-groupe)
+function isIgnored(uid){ return !!getGroupTag(uid)?.ignored; }
+function activeGroupEvents(){ return allGroupEvents.filter(e=>!isIgnored(e._uid)); }
+
+// Marquer/démarquer un événement comme non pertinent (exclu de tous les calculs)
+function toggleIgnoreGroupEvent(uid, checked){
+  setGroupTag(uid, checked ? { ignored:true } : null);
+  renderGroupTab();
+  renderProgression();
+  renderDevoirs();
+  renderNextSessionChip();
+  updateGroupBadge();
+  toast(checked ? 'Événement masqué — exclu des calculs' : 'Événement réaffiché');
+}
+
 function updateGroupBadge(){
-  const upcoming=allGroupEvents.filter(e=>getDays(e._date)>=0).length;
+  const upcoming=activeGroupEvents().filter(e=>getDays(e._date)>=0).length;
   const b=document.getElementById('badge-groupe');if(b)b.textContent=upcoming;
 }
 
@@ -2143,7 +2184,9 @@ function renderGroupTab(){
 function renderGroupList(){
   const el=document.getElementById('group-list');if(!el)return;
   const showPast=document.getElementById('show-past-groupe')?.checked;
-  const all=allGroupEvents.filter(e=>showPast||getDays(e._date)>=-1);
+  const showHidden=document.getElementById('show-hidden-groupe')?.checked;
+  let all=allGroupEvents.filter(e=>showPast||getDays(e._date)>=0);
+  if(!showHidden) all=all.filter(e=>!isIgnored(e._uid));
   if(!all.length){el.innerHTML='<div class="state-box"><p>Aucun événement à afficher.</p></div>';return;}
 
   // Construire la liste de sujets depuis les sessions (source la plus fiable pour les codes)
@@ -2157,7 +2200,8 @@ function renderGroupList(){
   const subjects=Object.entries(subjectMap).sort((a,b)=>a[0].localeCompare(b[0]));
 
   el.innerHTML=all.map(ev=>{
-    const sub=detectSubgroup(ev);const tag=getGroupTag(ev._uid);const isPast=getDays(ev._date)<0;
+    const ignored=isIgnored(ev._uid);
+    const isPast=getDays(ev._date)<0;
     const hasTime=ev._date&&(ev._date.getHours()+ev._date.getMinutes()>0);
     const timeStr=hasTime?fmtTime(ev._date):'–';const endStr=(hasTime&&ev._dateEnd)?` – ${fmtTime(ev._dateEnd)}`:'';
     const dur=ev._dateEnd&&hasTime?` · ${Math.round((ev._dateEnd-ev._date)/60000)}min`:'';
@@ -2165,6 +2209,31 @@ function renderGroupList(){
     // Année toujours affichée (ateliers peuvent être en 2027)
     const evYear=ev._date.getFullYear();const nowYear=new Date().getFullYear();
     const yearDisp=evYear!==nowYear?`<div style="font-size:8px;opacity:.75">${evYear}</div>`:'';
+
+    const passedPill=isPast?`<span class="pill" style="background:var(--bg-grey);color:var(--c-grey)"><i class="ti ti-check"></i> Passé</span>`:'';
+    const safeUid=ev._uid.replace(/[^a-zA-Z0-9_-]/g,'_');
+
+    // ── Événement masqué : carte simplifiée, lecture seule sauf checkbox de réaffichage ──
+    if (ignored) {
+      const unmaskCb = Auth.readOnly ? '' : `
+        <label class="group-tag-btn" style="cursor:pointer">
+          <input type="checkbox" checked onchange="toggleIgnoreGroupEvent('${ev._uid}',this.checked)" style="margin-right:4px;cursor:pointer">
+          Ne plus masquer
+        </label>`;
+      return`<div class="group-card ignored${isPast?' past':''}" style="opacity:.55">
+        <div class="group-time-badge past">
+          <div class="gtb-day">${fmtDay(ev._date)}</div><div class="gtb-date">${fmtShort(ev._date)}</div>${yearDisp}<div class="gtb-time">${timeStr}</div>
+        </div>
+        <div class="group-card-body">
+          <div class="tags"><span class="pill" style="background:var(--bg-grey);color:var(--c-grey)"><i class="ti ti-eye-off"></i> Masqué</span>${passedPill}</div>
+          <div class="group-card-title" title="${ev._title}">${ev._title||'—'}</div>
+          <div class="group-card-meta">${timeStr}${endStr}${dur}</div>
+          ${unmaskCb}
+        </div>
+      </div>`;
+    }
+
+    const sub=detectSubgroup(ev);const tag=getGroupTag(ev._uid);
 
     const badgeLabel=sub?`<span class="pill" style="background:var(--bg-orange);color:var(--c-orange)"><i class="ti ti-git-branch"></i> Sous-groupe</span>`
                         :`<span class="pill" style="background:var(--bg-green);color:var(--c-green)"><i class="ti ti-users"></i> Atelier</span>`;
@@ -2180,6 +2249,13 @@ function renderGroupList(){
       : `<button class="group-tag-btn" onclick="toggleTagForm('${ev._uid}')"><i class="ti ti-tag"></i> Attribuer</button>`;
     const subInfo=sub?`<div class="group-card-meta" style="color:var(--c-orange)"><i class="ti ti-git-branch" style="font-size:10px"></i> Même créneau : ${sub._courseName||sub._courseCode||'Live session'}</div>`:'';
 
+    // Checkbox "Masquer" — exclut l'événement de tout (atelier non pertinent)
+    const ignoreCb = Auth.readOnly ? '' : `
+      <label class="group-tag-btn" title="Cet événement n'est ni un atelier ni un sous-groupe pertinent" style="cursor:pointer">
+        <input type="checkbox" onchange="toggleIgnoreGroupEvent('${ev._uid}',this.checked)" style="margin-right:4px;cursor:pointer">
+        Masquer
+      </label>`;
+
     // Options matières
     const subjectOptions=subjects.map(([code,name])=>`<option value="${code}" data-name="${name}" ${tag?.subject===code?'selected':''}>${code!==name?code+' — ':''} ${name}</option>`).join('');
 
@@ -2191,19 +2267,24 @@ function renderGroupList(){
       d._courseName===tagCode ||
       (tagName && d._courseName===tagName)
     ):[];
-    const devoirOptions=tagDevoirs.map(d=>`<option value="${d.UID}" ${tag?.devoirUid===d.UID?'selected':''}>${d._title}</option>`).join('');
+    const devoirOptions=tagDevoirs.map(d=>{
+      const r=effectivelyRendu(d);
+      const isP=getDays(d._date)<0;
+      const status=r?' ✓ rendu':isP?' (passé)':'';
+      const style=r?'color:#5a9620':isP?'color:#888':'';
+      return`<option value="${d.UID}" ${tag?.devoirUid===d.UID?'selected':''} style="${style}">${d._title}${status}</option>`;
+    }).join('');
 
-    const safeUid=ev._uid.replace(/[^a-zA-Z0-9_-]/g,'_');
     return`<div class="group-card${isPast?' past':''}">
       <div class="group-time-badge${sub?' subgroup':isPast?' past':''}">
         <div class="gtb-day">${fmtDay(ev._date)}</div><div class="gtb-date">${fmtShort(ev._date)}</div>${yearDisp}<div class="gtb-time">${timeStr}</div>
       </div>
       <div class="group-card-body">
-        <div class="tags">${badgeLabel}${isPast?`<span class="pill" style="background:var(--bg-grey);color:var(--c-grey)"><i class="ti ti-check"></i> Passé</span>`:''}</div>
+        <div class="tags">${badgeLabel}${passedPill}</div>
         <div class="group-card-title" title="${ev._title}">${ev._title||'—'}</div>
         <div class="group-card-meta">${timeStr}${endStr}${dur}</div>
         ${subInfo}
-        ${tagLabel}
+        <div style="display:flex;gap:6px;flex-wrap:wrap">${tagLabel}${ignoreCb}</div>
         <div class="tag-form" id="tag-form-${safeUid}">
           <select id="tag-subject-${safeUid}" onchange="updateDevoirSelect('${safeUid}','${ev._uid}')">
             <option value="">— Choisir une matière —</option>${subjectOptions}
@@ -2238,7 +2319,13 @@ function updateDevoirSelect(safeUid, uid){
     (name && d._courseName===name)
   ):[];
   de.innerHTML=`<option value="">— Devoir lié (optionnel) —</option>`
-    +devoirs.map(d=>`<option value="${d.UID}">${d._title}</option>`).join('');
+    +devoirs.map(d=>{
+      const r=effectivelyRendu(d);
+      const isP=getDays(d._date)<0;
+      const status=r?' ✓ rendu':isP?' (passé)':'';
+      const style=r?'color:#5a9620':isP?'color:#888':'';
+      return`<option value="${d.UID}" style="${style}">${d._title}${status}</option>`;
+    }).join('');
 }
 function saveGroupTag(uid, safeUid){
   if(!safeUid)safeUid=uid.replace(/[^a-zA-Z0-9_-]/g,'_');
@@ -2280,7 +2367,7 @@ function renderGroupGrid(el,monday){
     const s=Math.max(0,Math.min(5,Math.floor((ev._date.getHours()-8)/2)));
     if(d>=0&&d<7)grid[`${d}-${s}`].push({type:'live',label:ev._courseCode||'Live'});
   });
-  allGroupEvents.forEach(ev=>{
+  activeGroupEvents().forEach(ev=>{
     if(!ev._date||ev._date<monday||ev._date>=weekEnd)return;
     const d=Math.round((new Date(ev._date.getFullYear(),ev._date.getMonth(),ev._date.getDate())-monday)/86400000);
     const s=Math.max(0,Math.min(5,Math.floor((ev._date.getHours()-8)/2)));
@@ -2306,7 +2393,7 @@ function renderGroupWeekList(el,monday){
     const day=new Date(monday);day.setDate(monday.getDate()+d);
     const isT=dayIdx(day)===todayD;
     const lives=allSessions.filter(s=>s._date&&dayIdx(s._date)===dayIdx(day));
-    const groups=allGroupEvents.filter(e=>e._date&&dayIdx(e._date)===dayIdx(day));
+    const groups=activeGroupEvents().filter(e=>e._date&&dayIdx(e._date)===dayIdx(day));
     if(!lives.length&&!groups.length)continue;
     const evs=[...lives.map(e=>({...e,_t:'live'})),...groups.map(e=>({...e,_t:detectSubgroup(e)?'overlap':'group'}))].sort((a,b)=>a._date-b._date);
     html+=`<div style="margin-bottom:12px">
@@ -2328,11 +2415,11 @@ function renderGroupWeekList(el,monday){
 /* Section 3 : Par matière */
 function renderGroupBySubject(){
   const el=document.getElementById('group-by-subject');if(!el)return;
-  const tagged=allGroupEvents.filter(e=>getGroupTag(e._uid));
+  const tagged=activeGroupEvents().filter(e=>getGroupTag(e._uid));
   if(!tagged.length){el.innerHTML='<p style="font-size:12px;color:var(--text3)">Aucun atelier attribué à une matière. Clique sur <i class="ti ti-tag"></i> <em>Attribuer</em> dans la liste ci-dessus.</p>';return;}
   const by={};
   tagged.forEach(ev=>{const tag=getGroupTag(ev._uid);const k=tag.subject;if(!by[k])by[k]={code:tag.subject,name:tag.subjectName||tag.subject,ateliers:[],subs:[]};detectSubgroup(ev)?by[k].subs.push(ev):by[k].ateliers.push(ev);});
-  const untagged=allGroupEvents.filter(e=>!getGroupTag(e._uid)&&getDays(e._date)>=0);
+  const untagged=activeGroupEvents().filter(e=>!getGroupTag(e._uid)&&getDays(e._date)>=0);
   let rows=Object.values(by).sort((a,b)=>a.code.localeCompare(b.code)).map(s=>{
     const next=[...s.ateliers,...s.subs].filter(e=>getDays(e._date)>=0).sort((a,b)=>a._date-b._date)[0];
     const aDots=s.ateliers.map(()=>`<div class="gs-dot" style="background:var(--c-green)"></div>`).join('');
@@ -2352,7 +2439,7 @@ function renderNextSessionChip() {
 
   // Fusionner live sessions Brightspace + ateliers groupe, trier par date
   const liveItems  = allSessions.filter(s => getDays(s._date) >= 0).map(s => ({ ...s, _kind: 'live' }));
-  const groupItems = allGroupEvents.filter(e => getDays(e._date) >= 0).map(e => ({ ...e, _kind: 'group' }));
+  const groupItems = activeGroupEvents().filter(e => getDays(e._date) >= 0).map(e => ({ ...e, _kind: 'group' }));
   const next = [...liveItems, ...groupItems].sort((a,b) => a._date - b._date)[0];
   if (!next) { chip.classList.remove('visible'); return; }
 
@@ -2461,7 +2548,10 @@ function renderStats() {
 ══════════════════════════════════════════════════════════════ */
 function renderDevoirs() {
   const showPast=document.getElementById('show-past-devoirs').checked;
-  const base=allDevoirs.filter(d=>filterDevoirs==='all'||d._type===filterDevoirs).filter(d=>showPast||getDays(d._date)>=0);
+  const showRendus=document.getElementById('show-rendus-devoirs')?.checked ?? true;
+  const base=allDevoirs.filter(d=>filterDevoirs==='all'||d._type===filterDevoirs)
+    .filter(d=>showPast||getDays(d._date)>=0)
+    .filter(d=>showRendus||!effectivelyRendu(d));
   renderDisciplineChips('devoirs',base);
   const filtered=base.filter(d=>filterDiscDevoirs==='all'||(d._courseName||'').trim()===filterDiscDevoirs);
   const el=document.getElementById('devoirs-list');
@@ -2506,17 +2596,24 @@ function renderDevoirs() {
            Marquer comme rendu
          </label>`;
 
-    // Prochain atelier (devoirs collectifs uniquement, si calendrier groupe chargé)
+    // Atelier (devoirs collectifs uniquement, si calendrier groupe chargé)
     let atelierBlock = '';
     if (ev._type === 'collectif') {
-      const nextAt = getNextAtelierForDevoir(ev.UID);
-      if (nextAt) {
-        const atDays = getDays(nextAt._date);
-        const atLabel = atDays === 0 ? "Aujourd'hui" : atDays === 1 ? 'Demain' : `${fmtShort(nextAt._date)} · J−${atDays}`;
-        const atTime = nextAt._date && (nextAt._date.getHours()+nextAt._date.getMinutes()>0) ? ` à ${fmtTime(nextAt._date)}` : '';
-        atelierBlock = `<div class="rendu-check" style="color:var(--c-green);cursor:default">
-          <i class="ti ti-users" style="font-size:11px"></i> Prochain atelier : ${atLabel}${atTime}
-        </div>`;
+      const linked = getLinkedAtelierForDevoir(ev.UID);
+      if (linked) {
+        const at = linked.event;
+        const atTime = at._date && (at._date.getHours()+at._date.getMinutes()>0) ? ` à ${fmtTime(at._date)}` : '';
+        if (linked.isPast) {
+          atelierBlock = `<div class="rendu-check" style="color:var(--text2);cursor:default">
+            <i class="ti ti-users" style="font-size:11px"></i> Atelier réalisé le ${fmtShort(at._date)}${atTime}
+          </div>`;
+        } else {
+          const atDays = getDays(at._date);
+          const atLabel = atDays === 0 ? "Aujourd'hui" : atDays === 1 ? 'Demain' : `${fmtShort(at._date)} · J−${atDays}`;
+          atelierBlock = `<div class="rendu-check" style="color:var(--c-green);cursor:default">
+            <i class="ti ti-users" style="font-size:11px"></i> Prochain atelier : ${atLabel}${atTime}
+          </div>`;
+        }
       } else if (allGroupEvents.length > 0 && !Auth.readOnly) {
         atelierBlock = `<div class="rendu-check" style="color:var(--text3);cursor:default">
           <i class="ti ti-users" style="font-size:11px"></i> Aucun atelier lié — associe-en un dans l'onglet Groupe
@@ -2541,9 +2638,10 @@ function renderDevoirs() {
       ${Auth.readOnly ? '' : `
       <div class="card-actions">
         ${bsBlock}
+        ${rendu ? '' : `
         <button class="action-btn" onclick="copyTask(${idx})"><i class="ti ti-clipboard-copy"></i> Copier tâche</button>
         <a class="action-btn" href="${gcUrl(ev)}" target="_blank" rel="noopener"><i class="ti ti-brand-google"></i> Google Cal.</a>
-        <a class="action-btn" href="${outlookUrl(ev)}" target="_blank" rel="noopener"><i class="ti ti-brand-office"></i> Outlook</a>
+        <a class="action-btn" href="${outlookUrl(ev)}" target="_blank" rel="noopener"><i class="ti ti-brand-office"></i> Outlook</a>`}
       </div>`}
     </div>`;
   }).join('');
@@ -2597,7 +2695,7 @@ function renderSessions() {
         <div class="card-meta"><i class="ti ti-clock" style="font-size:11px"></i><span>${timeStr}</span>${duration?`<span style="color:var(--text3)">·</span><span>${duration} min</span>`:''}</div>
         ${instructorLine}
       </div>
-      ${Auth.readOnly ? '' : `
+      ${Auth.readOnly || isPast ? '' : `
       <div class="card-actions">
         ${joinBtn}
         <a class="action-btn" href="${gcUrl(ev)}" target="_blank" rel="noopener"><i class="ti ti-brand-google"></i> Google Cal.</a>
@@ -2833,8 +2931,8 @@ function renderProgression() {
       ${d.collectifs?`<span class="prog-type-pill" style="background:var(--bg-green);color:var(--c-green)"><i class="ti ti-users"></i> ${d.collectifs} collectif${d.collectifs>1?'s':''}</span>`:''}
     </div>`;
     // Option A : ateliers groupe associés à cette matière
-    const atelierCount = allGroupEvents.filter(e=>{const t=getGroupTag(e._uid);return t?.subject===d.code&&getDays(e._date)>=0&&!detectSubgroup(e);}).length;
-    const sgCount      = allGroupEvents.filter(e=>{const t=getGroupTag(e._uid);return t?.subject===d.code&&getDays(e._date)>=0&&detectSubgroup(e);}).length;
+    const atelierCount = activeGroupEvents().filter(e=>{const t=getGroupTag(e._uid);return t?.subject===d.code&&getDays(e._date)>=0&&!detectSubgroup(e);}).length;
+    const sgCount      = activeGroupEvents().filter(e=>{const t=getGroupTag(e._uid);return t?.subject===d.code&&getDays(e._date)>=0&&detectSubgroup(e);}).length;
     const groupRow = (atelierCount||sgCount) ? `<div class="prog-type-row">
       ${atelierCount?`<span class="prog-type-pill" style="background:var(--bg-green);color:var(--c-green)"><i class="ti ti-users"></i> ${atelierCount} atelier${atelierCount>1?'s':''}</span>`:''}
       ${sgCount?`<span class="prog-type-pill" style="background:var(--bg-orange);color:var(--c-orange)"><i class="ti ti-git-branch"></i> ${sgCount} sous-gr.</span>`:''}
@@ -2897,15 +2995,26 @@ function renderProgression() {
       <span class="week-count">${v.total}</span>
       <div class="week-tooltip">
         <strong>${w}${isCurrent?' (cette semaine)':''}</strong><br>${ttItems}
-        <div style="margin-top:6px;color:var(--text3);font-size:10px">
-          ● rendu &nbsp; ○ à rendre &nbsp; hachuré = à faire
+        <div style="margin-top:6px;color:var(--text3);font-size:10px;display:flex;gap:10px;flex-wrap:wrap">
+          <span style="display:inline-flex;align-items:center;gap:4px"><span class="tt-dot" style="background:var(--c-green);display:inline-block"></span> rendu (✓)</span>
+          <span style="display:inline-flex;align-items:center;gap:4px"><span class="tt-dot" style="background:var(--c-orange);display:inline-block"></span> à rendre</span>
+          <span>hachuré = charge restante de la semaine</span>
         </div>
       </div>
     </div>`;
   }).join(''):`<p style="font-size:13px;color:var(--text2)">Aucune échéance dans les 8 prochaines semaines.</p>`;
 
+  // Légende ateliers/sous-groupes — affichée seulement si au moins une carte en montre
+  const hasGroupInfo = discList.some(d => activeGroupEvents().some(e=>{const t=getGroupTag(e._uid);return t?.subject===d.code&&getDays(e._date)>=0;}));
+  const groupLegend = hasGroupInfo ? `
+    <div style="display:flex;gap:14px;margin:-6px 0 14px;font-size:11px;color:var(--text2);flex-wrap:wrap">
+      <span style="display:inline-flex;align-items:center;gap:5px"><span class="prog-type-pill" style="background:var(--bg-green);color:var(--c-green)"><i class="ti ti-users"></i></span> Ateliers de groupe liés à la matière</span>
+      <span style="display:inline-flex;align-items:center;gap:5px"><span class="prog-type-pill" style="background:var(--bg-orange);color:var(--c-orange)"><i class="ti ti-git-branch"></i></span> Sous-groupes (même créneau qu'une live session)</span>
+    </div>` : '';
+
   el.innerHTML=`
     <div class="prog-grid">${progCards}</div>
+    ${groupLegend}
     <div class="week-chart">
       <h3><i class="ti ti-calendar-stats"></i> Charge par semaine · survole une barre pour voir les devoirs</h3>
       ${weekRows}
