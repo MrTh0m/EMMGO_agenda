@@ -603,6 +603,7 @@ textarea { height:auto;padding:10px 12px;resize:vertical;line-height:1.5; }
         <i class="ti ti-sun" id="theme-icon"></i>
       </button>
       <button class="btn" onclick="toggleSettings()"><i class="ti ti-settings"></i></button>
+      <button class="btn" onclick="toggleInfo()" title="À propos"><i class="ti ti-info-circle"></i></button>
       <button class="btn primary" onclick="loadCalendar()">
         <i class="ti ti-refresh"></i> Actualiser
       </button>
@@ -622,6 +623,39 @@ textarea { height:auto;padding:10px 12px;resize:vertical;line-height:1.5; }
           <i class="ti ti-login"></i> Se connecter
         </button>
         <p class="modal-error" id="login-error"></p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Info modal -->
+  <div id="info-modal" style="display:none" role="dialog" aria-modal="true">
+    <div class="modal-overlay" onclick="if(event.target===this)toggleInfo()">
+      <div class="modal-box" style="max-width:420px;text-align:left">
+        <button class="modal-close" onclick="toggleInfo()" title="Fermer"><i class="ti ti-x"></i></button>
+        <h3><i class="ti ti-info-circle"></i> Brightspace Agenda</h3>
+        <p class="msub" style="margin-bottom:14px">Suivi des devoirs, live sessions et ateliers de groupe — compatible avec tout établissement utilisant Brightspace by D2L.</p>
+
+        <div style="font-size:13px;line-height:1.6;color:var(--text);margin-bottom:16px">
+          <strong>Comment ça marche :</strong> renseigne l'URL de ton flux ICS Brightspace (Agenda → icône d'abonnement) dans ⚙ Paramètres.
+          Aucune donnée n'est envoyée à un tiers — en mode invité tout reste dans ton navigateur ; en mode connecté tout reste sur ton propre serveur.
+        </div>
+
+        <div style="background:var(--bg2);border-radius:8px;padding:10px 12px;margin-bottom:14px;font-size:12px;color:var(--text2)">
+          <div style="font-weight:600;color:var(--text);margin-bottom:4px"><i class="ti ti-sparkles" style="font-size:12px"></i> Notes de version</div>
+          <ul style="margin:0;padding-left:18px;line-height:1.6">
+            <li>Onglet <strong>Groupe</strong> : ateliers, sous-groupes, vue semaine, attribution matière/devoir</li>
+            <li>Notifications navigateur (devoirs, ateliers, programme du jour)</li>
+            <li>Chip "Prochain événement" avec compte à rebours</li>
+            <li>Filtres Passés / Rendus / Masqués</li>
+            <li>Mode invité, connecté et lien de partage (lecture seule)</li>
+          </ul>
+        </div>
+
+        <a href="https://github.com/MrTh0m/Brightspace_agenda" target="_blank" rel="noopener"
+           class="btn primary" style="width:100%;height:38px;justify-content:center;text-decoration:none">
+          <i class="ti ti-brand-github"></i> Code source & documentation
+        </a>
+        <p style="font-size:11px;color:var(--text3);text-align:center;margin-top:10px">Licence MIT · Projet personnel non affilié à D2L ni à un établissement</p>
       </div>
     </div>
   </div>
@@ -3032,6 +3066,12 @@ function toggleSettings(){
   // En mode connecté, afficher le bouton crayon pour modifier l'URL
   const unlockBtn = document.getElementById('btn-unlock-url');
   if (unlockBtn) unlockBtn.style.display = Auth.mode === 'connected' ? '' : 'none';
+}
+
+// Modale "À propos" — notes de version, notice, lien GitHub
+function toggleInfo(){
+  const m=document.getElementById('info-modal');
+  m.style.display=m.style.display==='none'?'':'none';
 }
 
 // Déverrouiller le champ URL pour permettre la saisie d'une nouvelle URL

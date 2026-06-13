@@ -35,7 +35,7 @@ Un seul fichier HTML + un backend PHP léger, hébergeable sur ton propre serveu
 ### Mode connecté (1 compte, persistance serveur)
 - Login par mot de passe (bcrypt PHP)
 - URL ICS Brightspace + URL ICS privée stockées dans `data/config.json` — jamais exposées au navigateur
-- État "rendu" et attributions d'ateliers stockés dans `data/state.json`, synchronisés sur tous les appareils
+- État "rendu", attributions d'ateliers et exclusions stockés dans `data/state.json`, synchronisés sur tous les appareils
 - **Nom personnalisé** du dashboard configurable dans les paramètres
 - Onglet **Groupe de travail** disponible (calendrier privé Outlook/Google)
 
@@ -80,6 +80,7 @@ Mode offline : Service Worker cache le dernier ICS et l'état des rendus.
 ## ✨ Fonctionnalités
 
 ### Interface globale
+- **Bouton ℹ️ "À propos"** : notes de version, notice d'utilisation et lien vers le dépôt GitHub — accessible depuis n'importe quel mode
 - **Titre dynamique** : `X-WR-CALNAME` de l'ICS, institution extraite du sous-domaine Brightspace, ou nom personnalisé en mode connecté
 - **Chip "Prochain événement"** : affiche la prochaine live session OU le prochain atelier groupe, selon l'échéance la plus proche
   - Compte à rebours `"Dans X min"` quand < 60 min (rouge), orange si aujourd'hui/demain
@@ -91,15 +92,17 @@ Mode offline : Service Worker cache le dernier ICS et l'état des rendus.
 - Détection automatique : `Assessment`, `Co-construction`, `à échéance`
 - Nettoyage des titres : suppression du préfixe `Assessment :` seulement si suivi d'un séparateur (`:`, `–`, `-`), suppression du suffixe `à échéance` et des séparateurs résiduels en fin de titre
 - Compte à rebours coloré : rouge ≤ 3j · orange ≤ 7j · vert ≥ 15j
+- Filtres **Passés** et **Rendus** (cases à droite) — combinables, réinitialisent la pagination pour un effet immédiat
 - Cases "Marquer comme rendu" persistantes · devoirs passés = rendus automatiquement
-- **Prochain atelier** sur les devoirs collectifs, **uniquement si explicitement lié à ce devoir précis** via l'onglet Groupe
+- Sur un devoir **rendu**, les boutons Copier tâche / Google Cal. / Outlook sont masqués (seuls Casier et Afficher l'événement restent)
+- **Atelier lié** sur les devoirs collectifs : "Prochain atelier : ..." (à venir) ou "Atelier réalisé le ..." (passé), uniquement si explicitement lié à ce devoir via l'onglet Groupe
 - **"Aucun atelier lié — associe-en un dans l'onglet Groupe"** si calendrier groupe chargé mais aucun lien établi
 - Filtres par type et discipline · Pagination
 
 ### Onglet Live Sessions
 - Détection : `Cours distanciel`, `virtual-room.em-lyon.com`, URLs Teams
 - Extraction code matière + nom depuis le titre ou la parenthèse finale du LOCATION
-- Bouton **Rejoindre** · badge "Aujourd'hui" · filtre par discipline
+- Bouton **Rejoindre** masqué pour les sessions passées (avec Google Cal. / Outlook) · badge "Aujourd'hui" · filtre par discipline
 
 ### Onglet Groupe de travail *(tous modes — invité, connecté, lecture seule)*
 - **Source** : calendrier ICS privé (Outlook 365, Google Calendar...)
@@ -110,16 +113,18 @@ Mode offline : Service Worker cache le dernier ICS et l'état des rendus.
   - 🟦 Teal = Live sessions Brightspace · 🟩 Vert = Ateliers · 🟧 Orange = Sous-groupe (même créneau ±30 min)
   - Navigation semaine ← → · code matière visible sur les ateliers en vue liste
 - **Section Par matière** : tableau récap (ateliers, sous-groupes, prochain) par matière attribuée
-- **Section Ateliers** : liste chronologique avec toggle "Passés"
+- **Section Ateliers** : liste chronologique avec toggles "Passés" et "Masqués"
   - **Attribution manuelle** : lier un atelier à une matière + devoir précis (mode connecté/invité)
-  - Attribution visible en lecture seule (badge non-cliquable)
+    - Le menu déroulant des devoirs signale en couleur les devoirs déjà **rendus** (✓ rendu) ou **passés**
+  - **Masquer** : exclut un événement non pertinent (ni atelier, ni sous-groupe) de toute la liste, vue semaine, comptages et notifications ; pas d'attribution possible tant que masqué
+  - Attribution et masquage visibles en lecture seule (badges non éditables)
   - Année toujours affichée sur la date (ateliers pouvant s'étendre sur l'année suivante)
   - Nom du devoir lié affiché sur le bouton d'attribution
 
 ### Onglet Progression
 - Cartes par matière : barre de progression, répartition individuel/collectif
-- **Ateliers** : compteur `X ateliers · Y sous-gr.` sur chaque carte si des ateliers sont attribués à la matière
-- Histogramme hebdomadaire avec segments plein/hachuré et tooltip devoirs
+- **Ateliers** : compteur `X ateliers · Y sous-gr.` sur chaque carte si des ateliers sont attribués à la matière, avec légende dédiée
+- Histogramme hebdomadaire avec segments plein/hachuré, tooltip détaillant chaque devoir (point coloré = rendu/à rendre, ✓ = rendu)
 - **Gantt** : durées des cours, ligne "Aujourd'hui"
 
 ### 🔔 Notifications *(tous modes, réglages par appareil)*
@@ -134,6 +139,7 @@ Section dédiée dans ⚙ Paramètres — fonctionne tant qu'un onglet de l'app 
 
 - Réglages stockés en `localStorage` (indépendants entre appareils — PC / téléphone)
 - Vérification automatique toutes les 60s + après chaque chargement de calendrier
+- Les événements masqués (onglet Groupe) sont exclus de toutes les notifications
 - Anti-doublon : chaque notification n'est envoyée qu'une fois (purge après 3 jours)
 - Bouton "Tester une notification" pour valider la configuration
 - Sur PWA Android installée : notifications via Service Worker (`showNotification`), tap → focus/ouvre l'app
@@ -178,7 +184,8 @@ Section dédiée dans ⚙ Paramètres — fonctionne tant qu'un onglet de l'app 
       "subject": "PGMC05",
       "subjectName": "Management agile et responsable",
       "devoirUid": "uid-devoir-précis"
-    }
+    },
+    "uid-evenement-ignore": { "ignored": true }
   }
 }
 ```
@@ -190,7 +197,7 @@ Section dédiée dans ⚙ Paramètres — fonctionne tant qu'un onglet de l'app 
 | `emmgo_ics_url_v2` | URL ICS Brightspace (mode invité) |
 | `emmgo_rendu_v1` | État "rendu" des devoirs (mode invité) |
 | `emmgo_private_ics_url_v1` | URL ICS privée groupe (mode invité) |
-| `emmgo_group_tags_v1` | Attributions matière/devoir des ateliers (mode invité) |
+| `emmgo_group_tags_v1` | Attributions matière/devoir + exclusions des ateliers (mode invité) |
 | `emmgo_theme` | Thème (clair/sombre/système) |
 | `emmgo_notif_settings_v1` | Préférences de notifications |
 | `emmgo_notif_sent_v1` | Historique anti-doublon des notifications (purge 3j) |
