@@ -643,7 +643,7 @@ textarea { height:auto;padding:10px 12px;resize:vertical;line-height:1.5; }
         <div style="background:var(--bg2);border-radius:8px;padding:10px 12px;margin-bottom:14px;font-size:12px;color:var(--text2)">
           <div style="font-weight:600;color:var(--text);margin-bottom:4px"><i class="ti ti-sparkles" style="font-size:12px"></i> Notes de version</div>
           <ul style="margin:0;padding-left:18px;line-height:1.6">
-            <li>Onglet <strong>Groupe</strong> : ateliers, sous-groupes, vue semaine, attribution matière/devoir</li>
+            <li>Onglet <strong>Groupes</strong> : ateliers, sous-groupes, vue semaine, attribution matière/devoir</li>
             <li>Notifications navigateur (devoirs, ateliers, programme du jour)</li>
             <li>Chip "Prochain événement" avec compte à rebours</li>
             <li>Filtres Passés / Rendus / Masqués</li>
@@ -860,7 +860,7 @@ textarea { height:auto;padding:10px 12px;resize:vertical;line-height:1.5; }
         <span class="badge" id="badge-sessions">0</span>
       </button>
       <button class="tab" id="tab-groupe" onclick="switchTab('groupe')" style="display:none">
-        <i class="ti ti-users"></i> Groupe
+        <i class="ti ti-users"></i> Groupes
         <span class="badge" id="badge-groupe">0</span>
       </button>
       <button class="tab" id="tab-prog" onclick="switchTab('prog')">
@@ -894,10 +894,12 @@ textarea { height:auto;padding:10px 12px;resize:vertical;line-height:1.5; }
     <div id="pane-sessions" style="display:none">
       <div class="filters">
         <button class="chip active" data-filter="all" onclick="setFilter(this,'sessions')"><i class="ti ti-list"></i> Toutes</button>
-        <label class="past-label">
-          <input type="checkbox" id="show-past-sessions" onchange="renderSessions()">
-          Passées (<span id="past-count-sessions">0</span>)
-        </label>
+        <div class="filter-toggles">
+          <label class="past-label">
+            <input type="checkbox" id="show-past-sessions" onchange="resetPaginationAndRender('sessions')">
+            Passées (<span id="past-count-sessions">0</span>)
+          </label>
+        </div>
       </div>
       <div class="filters disc-filters" id="disc-filter-sessions" style="display:none"></div>
       <div class="list" id="sessions-list"></div>
@@ -942,11 +944,11 @@ textarea { height:auto;padding:10px 12px;resize:vertical;line-height:1.5; }
             <h3 class="group-section-title"><i class="ti ti-calendar-event"></i> Ateliers</h3>
             <div style="display:flex;align-items:center;gap:12px">
               <label class="past-label" style="font-size:12px;color:var(--text2);cursor:pointer;display:flex;align-items:center;gap:6px">
-                <input type="checkbox" id="show-past-groupe" onchange="renderGroupList()" style="cursor:pointer;accent-color:var(--c-blue)">
+                <input type="checkbox" id="show-past-groupe" onchange="resetPaginationAndRender('group')" style="cursor:pointer;accent-color:var(--c-blue)">
                 Passés
               </label>
               <label class="past-label" style="font-size:12px;color:var(--text2);cursor:pointer;display:flex;align-items:center;gap:6px">
-                <input type="checkbox" id="show-hidden-groupe" onchange="renderGroupList()" style="cursor:pointer;accent-color:var(--c-blue)">
+                <input type="checkbox" id="show-hidden-groupe" onchange="resetPaginationAndRender('group')" style="cursor:pointer;accent-color:var(--c-blue)">
                 Masqués
               </label>
             </div>
@@ -1178,6 +1180,7 @@ let filterDiscDevoirs  = 'all';
 let filterDiscSessions = 'all';
 let shownDevoirs   = PAGE_SIZE;
 let shownSessions  = PAGE_SIZE;
+let shownGroup     = PAGE_SIZE;
 let currentTab     = 'devoirs';
 
 /* ══════════════════════════════════════════════════════════════
@@ -2064,6 +2067,7 @@ function setFilter(btn,pane) {
 function resetPaginationAndRender(pane) {
   if (pane==='devoirs') { shownDevoirs=PAGE_SIZE; renderDevoirs(); }
   if (pane==='sessions'){ shownSessions=PAGE_SIZE; renderSessions(); }
+  if (pane==='group')   { shownGroup=PAGE_SIZE; renderGroupList(); }
 }
 function setDisciplineFilter(pane,key,btn) {
   document.getElementById(`disc-filter-${pane}`).querySelectorAll('.chip').forEach(b=>b.classList.remove('active'));
@@ -2156,6 +2160,7 @@ async function fetchPrivateIcsGuest(url){
 function processGroupICS(txt){
   const all=parseICS(txt);
   allGroupEvents=all.map(ev=>({...ev,_date:parseDt(ev.DTSTART),_dateEnd:parseDt(ev.DTEND),_title:unescape(ev.SUMMARY||'').trim(),_uid:ev.UID||`grp-${Math.random().toString(36).slice(2)}`})).filter(e=>e._date).sort((a,b)=>a._date-b._date);
+  shownGroup=PAGE_SIZE;
   updateGroupBadge();renderGroupTab();
   renderDevoirs();   // rafraîchir les cartes devoir pour afficher les liens ateliers
   renderProgression(); // rafraîchir les cartes progression (option A)
@@ -2223,6 +2228,9 @@ function renderGroupList(){
   if(!showHidden) all=all.filter(e=>!isIgnored(e._uid));
   if(!all.length){el.innerHTML='<div class="state-box"><p>Aucun événement à afficher.</p></div>';return;}
 
+  const visible=all.slice(0,shownGroup);
+  const remaining=all.length-visible.length;
+
   // Construire la liste de sujets depuis les sessions (source la plus fiable pour les codes)
   // + devoirs en complément, dédupliqués par code
   const subjectMap={};
@@ -2233,7 +2241,7 @@ function renderGroupList(){
   });
   const subjects=Object.entries(subjectMap).sort((a,b)=>a[0].localeCompare(b[0]));
 
-  el.innerHTML=all.map(ev=>{
+  el.innerHTML=visible.map(ev=>{
     const ignored=isIgnored(ev._uid);
     const isPast=getDays(ev._date)<0;
     const hasTime=ev._date&&(ev._date.getHours()+ev._date.getMinutes()>0);
@@ -2334,6 +2342,12 @@ function renderGroupList(){
       </div>
     </div>`;
   }).join('');
+
+  if(remaining>0){
+    el.innerHTML+=`<button class="show-more" onclick="shownGroup+=PAGE_SIZE;renderGroupList()">
+      <i class="ti ti-chevrons-down"></i> Afficher ${Math.min(remaining,PAGE_SIZE)} de plus (${remaining} restants)
+    </button>`;
+  }
 }
 
 function toggleTagForm(uid){
@@ -2650,7 +2664,7 @@ function renderDevoirs() {
         }
       } else if (allGroupEvents.length > 0 && !Auth.readOnly) {
         atelierBlock = `<div class="rendu-check" style="color:var(--text3);cursor:default">
-          <i class="ti ti-users" style="font-size:11px"></i> Aucun atelier lié — associe-en un dans l'onglet Groupe
+          <i class="ti ti-users" style="font-size:11px"></i> Aucun atelier lié — associe-en un dans l'onglet Groupes
         </div>`;
       }
     }
